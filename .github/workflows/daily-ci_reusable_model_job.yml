@@ -146,7 +146,50 @@ jobs:
 
       - name: Install kernels from source
         working-directory: /transformers
-        run: pip install git+https://github.com/huggingface/kernels#subdirectory=kernels && pip install -U urllib3
+        run: |
+          echo "=== [DEBUG] Installing kernels from source ==="
+          pip install git+https://github.com/huggingface/kernels#subdirectory=kernels && pip install -U urllib3
+          echo "=== [DEBUG] kernels + urllib3 install done ==="
+          pip show kernels urllib3 sigstore tuf | grep -E 'Name:|Version:'
+
+      - name: Debug kernels import chain (hang detection)
+        working-directory: /transformers
+        run: |
+          echo "=== [DEBUG] Testing kernels import chain with 60s timeout per step ==="
+          python3 - <<'EOF'
+          import sys
+          import threading
+          import warnings
+          warnings.filterwarnings("ignore")
+
+          def run_with_timeout(label, fn, timeout=60):
+              result = {"done": False, "error": None}
+              def target():
+                  try:
+                      fn()
+                      result["done"] = True
+                  except Exception as e:
+                      result["error"] = e
+                      result["done"] = True
+              t = threading.Thread(target=target, daemon=True)
+              t.start()
+              t.join(timeout=timeout)
+              if not result["done"]:
+                  print(f"WARNING: [{label}] HUNG after {timeout}s - potential deadlock!", flush=True)
+              elif result["error"]:
+                  print(f"WARNING: [{label}] raised {type(result['error']).__name__}: {result['error']}", flush=True)
+              else:
+                  print(f"OK: [{label}] completed", flush=True)
+
+          run_with_timeout("import kernels",          lambda: __import__("kernels"))
+          run_with_timeout("import kernels.load",     lambda: __import__("kernels.load"))
+          run_with_timeout("import kernels.validate", lambda: __import__("kernels.validate"))
+          run_with_timeout("import kernels.verify",   lambda: __import__("kernels.verify"))
+          run_with_timeout("import sigstore.models",  lambda: __import__("sigstore.models"))
+          run_with_timeout("import tuf.ngclient",     lambda: __import__("tuf.ngclient"))
+          run_with_timeout("import urllib3",          lambda: __import__("urllib3"))
+          print("=== [DEBUG] import chain check complete ===", flush=True)
+          EOF
 
       # Install the CI observability wrapper (provides `configure-ci-otel`,
       # `report-ci-start` and the `transformersci_otel` pytest plugin). Kept as a
@@ -171,6 +214,19 @@ jobs:
       - name: NVIDIA-SMI
         run: |
           nvidia-smi
+
+      - name: CPU and memory info
+        run: |
+          echo "=== CPU info ==="
+          nproc
+          grep 'model name' /proc/cpuinfo | head -1
+          echo "=== Memory info ==="
+          free -h
+          cat /proc/meminfo | grep -E 'MemTotal|MemFree|MemAvailable|SwapTotal|SwapFree'
+          echo "=== cgroup memory limit ==="
+          cat /sys/fs/cgroup/memory/memory.limit_in_bytes 2>/dev/null || cat /sys/fs/cgroup/memory.max 2>/dev/null || echo "no cgroup memory limit found"
+          echo "=== Disk space ==="
+          df -h /mnt/cache 2>/dev/null || df -h /
 
       - name: Environment
         working-directory: /transformers
@@ -296,7 +352,18 @@ jobs:
             OTEL_WRAP="configure-ci-otel --suite $TRANSFORMERS_TEST_OTEL_SUITE --service-name pytest-observability --protocol http --otlp-endpoint $OTEL_EXPORTER_OTLP_ENDPOINT --token $OTEL_TOKEN --staging-endpoint 10.90.52.50:5317 --staging-protocol grpc --"
           fi
 
+          echo "=== [DEBUG] Memory before pytest ==="
+          free -h
+
+          echo "=== [DEBUG] Running collect-only first (timeout 120s) ==="
+          collect_start=$(date +%s)
+          timeout 120 python3 -m pytest --collect-only -q -m "${pytest_marker}" ${test_path} 2>&1 | tail -5 || echo "WARNING: collect-only failed or timed out (exit $?)"
+          collect_end=$(date +%s)
+          echo "=== [DEBUG] collect-only took $((collect_end - collect_start))s ==="
+
+          echo "=== [DEBUG] Starting script -q -c pytest at $(date) ==="
           script -q -c "PATCH_TESTING_METHODS_TO_COLLECT_OUTPUTS=yes _PATCHED_TESTING_METHODS_OUTPUT_DIR=/transformers/reports/${machine_type}_${report_name_prefix}_${matrix_folders}_test_reports $OTEL_WRAP python3 -m pytest -rsfE -v -m '${pytest_marker}' --make-reports=${machine_type}_${report_name_prefix}_${matrix_folders}_test_reports ${test_path}" test_outputs.txt
+          echo "=== [DEBUG] script -q -c pytest exited at $(date) ==="
           ls -la
           # Extract the exit code from the output file
           EXIT_CODE=$(tail -1 test_outputs.txt | grep -o 'COMMAND_EXIT_CODE="[0-9]*"' | cut -d'"' -f2)
