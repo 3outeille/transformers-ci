@@ -195,6 +195,7 @@ jobs:
 
       - name: Time Python imports (debug collection slowness)
         working-directory: /transformers
+        shell: bash
         run: |
           echo "=== [DEBUG] Timing: import transformers ==="
           time python3 -c "import transformers; print('transformers imported OK')"
