@@ -191,13 +191,7 @@ jobs:
           print("=== [DEBUG] import chain check complete ===", flush=True)
           EOF
 
-      # Install the CI observability wrapper (provides `configure-ci-otel`,
-      # `report-ci-start` and the `transformersci_otel` pytest plugin). Kept as a
-      # runtime install so an incident in transformers-ci can be hot-fixed
-      # without rebuilding the daily-CI docker image (mirrors the PR reusable).
-      - name: Install observability wrapper (transformers-ci[otel])
-        working-directory: /transformers
-        run: python3 -m pip install 'transformers-ci[otel] @ git+https://github.com/huggingface/transformers-ci@main'
+      # OTEL observability wrapper intentionally skipped for this kernels debug run
 
       - name: Update / Install some packages (for Past CI)
         if: ${{ contains(inputs.docker, '-past-') }}
@@ -299,71 +293,18 @@ jobs:
 
           echo "HF_HOME=${HF_HOME}"
 
-          # ── CI observability (OTEL) ─────────────────────────────────────────
-          # OTEL_EXPORTER_OTLP_ENDPOINT / OTEL_TOKEN are injected by the self-
-          # hosted runner. When absent, OTEL_WRAP stays empty and the pytest
-          # command below is identical to the un-instrumented upstream one.
-          # Stamp the hardware name (single-gpu / multi-gpu) so the exporter can
-          # split this test_job per hardware and the dashboards map it to GPU/xGPU.
-          # $machine_type is set by the "Set machine_type" step above.
-          #
-          # $CI_EVENT is the caller's human-readable ci_event ("Daily CI",
-          # "Nightly CI", "PR Comment CI", "Past CI - pytorch-1.13", "push").
-          # Slugify it into a stable, low-cardinality label value; the trailing
-          # " ci" is dropped so "Daily CI" keeps emitting exactly "daily" and
-          # existing dashboard queries are unchanged.
-          ci_event_slug="$(printf '%s' "$CI_EVENT" \
-            | tr '[:upper:]' '[:lower:]' \
-            | sed -E -e 's/ ci$//' -e 's/[^a-z0-9._]+/-/g' -e 's/^-+//' -e 's/-+$//')"
-          [ -n "$ci_event_slug" ] || ci_event_slug="daily"
-          echo "ci_event=${CI_EVENT} -> ci_event_slug=${ci_event_slug}"
-          #
-          # cicd.pipeline.task.run.id is this job's GitHub id, so a test page
-          # links its exact job log: one run_id + test_job spans every model
-          # folder and both machine types, and nothing else names the job.
-          export OTEL_RESOURCE_ATTRIBUTES="transformers.test.ci_event=${ci_event_slug},transformers.test.hardware=${machine_type},cicd.pipeline.task.run.id=${{ job.check_run_id }}"
-
-          OTEL_WRAP=""
-          if [ -n "$OTEL_EXPORTER_OTLP_ENDPOINT" ]; then
-            # Confirm the collector is reachable (diagnostic only, never fatal).
-            configure-ci-otel \
-              --protocol http \
-              --service-name pytest-observability \
-              --otlp-endpoint "$OTEL_EXPORTER_OTLP_ENDPOINT" \
-              --staging-endpoint 10.90.52.50:5317 \
-              --staging-protocol grpc \
-              --ping-server || echo "OTEL PING WARNING configure-ci-otel --ping-server is unavailable in this environment"
-
-            # Emit a run-start span so the run/job is visible on the live
-            # dashboards before the first test span arrives.
-            configure-ci-otel \
-              --suite "$TRANSFORMERS_TEST_OTEL_SUITE" \
-              --service-name pytest-observability \
-              --protocol http \
-              --otlp-endpoint "$OTEL_EXPORTER_OTLP_ENDPOINT" \
-              --token "$OTEL_TOKEN" \
-              --staging-endpoint 10.90.52.50:5317 \
-              --staging-protocol grpc \
-              -- report-ci-start || echo "OTEL START WARNING report-ci-start is unavailable in this environment"
-
-            # Prefix inserted before `python3 -m pytest`. Values are single
-            # tokens (no spaces) so unquoted expansion inside the `script -c`
-            # string below is safe.
-            OTEL_WRAP="configure-ci-otel --suite $TRANSFORMERS_TEST_OTEL_SUITE --service-name pytest-observability --protocol http --otlp-endpoint $OTEL_EXPORTER_OTLP_ENDPOINT --token $OTEL_TOKEN --staging-endpoint 10.90.52.50:5317 --staging-protocol grpc --"
-          fi
-
           echo "=== [DEBUG] Memory before pytest ==="
           free -h
 
-          echo "=== [DEBUG] Running collect-only first (timeout 120s) ==="
+          echo "=== [DEBUG] Running collect-only first ==="
           collect_start=$(date +%s)
-          timeout 120 python3 -m pytest --collect-only -q -m "${pytest_marker}" ${test_path} 2>&1 | tail -5 || echo "WARNING: collect-only failed or timed out (exit $?)"
+          python3 -m pytest --collect-only -q -m "${pytest_marker}" ${test_path} 2>&1 | tail -5
           collect_end=$(date +%s)
           echo "=== [DEBUG] collect-only took $((collect_end - collect_start))s ==="
 
-          echo "=== [DEBUG] Starting script -q -c pytest at $(date) ==="
-          script -q -c "PATCH_TESTING_METHODS_TO_COLLECT_OUTPUTS=yes _PATCHED_TESTING_METHODS_OUTPUT_DIR=/transformers/reports/${machine_type}_${report_name_prefix}_${matrix_folders}_test_reports $OTEL_WRAP python3 -m pytest -rsfE -v -m '${pytest_marker}' --make-reports=${machine_type}_${report_name_prefix}_${matrix_folders}_test_reports ${test_path}" test_outputs.txt
-          echo "=== [DEBUG] script -q -c pytest exited at $(date) ==="
+          echo "=== [DEBUG] Starting pytest at $(date) ==="
+          script -q -c "PATCH_TESTING_METHODS_TO_COLLECT_OUTPUTS=yes _PATCHED_TESTING_METHODS_OUTPUT_DIR=/transformers/reports/${machine_type}_${report_name_prefix}_${matrix_folders}_test_reports python3 -m pytest -rsfE -v -m '${pytest_marker}' --make-reports=${machine_type}_${report_name_prefix}_${matrix_folders}_test_reports ${test_path}" test_outputs.txt
+          echo "=== [DEBUG] pytest exited at $(date) ==="
           ls -la
           # Extract the exit code from the output file
           EXIT_CODE=$(tail -1 test_outputs.txt | grep -o 'COMMAND_EXIT_CODE="[0-9]*"' | cut -d'"' -f2)
