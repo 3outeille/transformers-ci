@@ -199,16 +199,23 @@ jobs:
         run: |
           echo "=== [DEBUG] Timing: import transformers ==="
           time python3 -c "import transformers; print('transformers imported OK')"
-          echo "=== [DEBUG] Timing: pytest --collect-only full llama dir (1st run, cold) ==="
+
+          echo "=== [DEBUG] HF_HOME (default, Xet FUSE): ${HF_HOME}"
+          echo "=== [DEBUG] 1st collect-only (HF_HOME=${HF_HOME}, Xet FUSE) ==="
           _cstart=$(date +%s)
           python3 -m pytest --collect-only -q tests/models/llama/ -p no:warnings 2>&1 | tail -5
           _cend=$(date +%s)
-          echo "=== [DEBUG] 1st collect-only took $((_cend - _cstart))s ==="
-          echo "=== [DEBUG] Timing: pytest --collect-only full llama dir (2nd run, warm) ==="
-          _cstart2=$(date +%s)
-          python3 -m pytest --collect-only -q tests/models/llama/ -p no:warnings 2>&1 | tail -5
-          _cend2=$(date +%s)
-          echo "=== [DEBUG] 2nd collect-only took $((_cend2 - _cstart2))s ==="
+          echo "=== [DEBUG] 1st collect-only (Xet FUSE) took $((_cend - _cstart))s ==="
+
+          if [ -d "/mnt/efs_cache" ]; then
+            echo "=== [DEBUG] 2nd collect-only (HF_HOME=/mnt/efs_cache, EFS) ==="
+            _cstart2=$(date +%s)
+            HF_HOME=/mnt/efs_cache python3 -m pytest --collect-only -q tests/models/llama/ -p no:warnings 2>&1 | tail -5
+            _cend2=$(date +%s)
+            echo "=== [DEBUG] 2nd collect-only (EFS) took $((_cend2 - _cstart2))s ==="
+          else
+            echo "=== [DEBUG] /mnt/efs_cache not available on this runner ==="
+          fi
 
 
       - name: Update / Install some packages (for Past CI)
