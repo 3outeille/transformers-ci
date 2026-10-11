@@ -199,13 +199,16 @@ jobs:
         run: |
           echo "=== [DEBUG] Timing: import transformers ==="
           time python3 -c "import transformers; print('transformers imported OK')"
-          echo "=== [DEBUG] Timing: import test_modeling_llama ==="
-          time python3 -c "import importlib.util, time as _t; t0=_t.time(); spec=importlib.util.spec_from_file_location('t','tests/models/llama/test_modeling_llama.py'); mod=importlib.util.module_from_spec(spec); spec.loader.exec_module(mod); print(f'test_modeling_llama imported in {_t.time()-t0:.2f}s')"
-          echo "=== [DEBUG] Timing: pytest collect-only on full llama dir ==="
+          echo "=== [DEBUG] Timing: pytest --collect-only full llama dir (1st run, cold) ==="
           _cstart=$(date +%s)
-          python3 -m pytest --collect-only -q tests/models/llama/ 2>&1 | tail -3
+          python3 -m pytest --collect-only -q tests/models/llama/ -p no:warnings 2>&1 | tail -5
           _cend=$(date +%s)
-          echo "=== [DEBUG] full-dir collect-only took $((_cend - _cstart))s ==="
+          echo "=== [DEBUG] 1st collect-only took $((_cend - _cstart))s ==="
+          echo "=== [DEBUG] Timing: pytest --collect-only full llama dir (2nd run, warm) ==="
+          _cstart2=$(date +%s)
+          python3 -m pytest --collect-only -q tests/models/llama/ -p no:warnings 2>&1 | tail -5
+          _cend2=$(date +%s)
+          echo "=== [DEBUG] 2nd collect-only took $((_cend2 - _cstart2))s ==="
 
 
       - name: Update / Install some packages (for Past CI)
