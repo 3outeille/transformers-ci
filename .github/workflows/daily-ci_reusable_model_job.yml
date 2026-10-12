@@ -234,7 +234,7 @@ jobs:
           # models (>20 GB), Xet prefetch can exhaust cgroup RAM → exit 137.
           # /mnt/efs_cache is an EFS (NFS) mount pre-warmed with these weights;
           # it avoids the Xet FUSE entirely. Has no effect on other runner types.
-          EFS_MODELS="auto bert clip cohere2_vision csm deepseek_v32 detr exaone4 exaone4_5 gemma2 gemma3 gemma3n glm4_moe glm4v_moe got_ocr2 gpt2 gpt_oss internvl llama llama4 llava minimax_m3_vl mistral mistral3 mistral4 modernbert muse_glimmer muse_glimmer_assistant phimoe pi0 qwen2 qwen2_5_omni qwen2_5_vl qwen2_audio qwen2_moe qwen3_omni_moe qwen3_vl_moe smolvlm speech_t5 t5 table_transformer vit wav2vec2 whisper"
+          EFS_MODELS="cohere2_vision deepseek_v32 exaone4 exaone4_5 gemma2 glm4_moe glm4v_moe llama4 minimax_m3_vl mistral4 muse_glimmer muse_glimmer_assistant phimoe qwen2_moe qwen3_omni_moe qwen3_vl_moe"
           model_short="${model#models/}"
           if printf '%s\n' $EFS_MODELS | grep -qx "$model_short" && [ -d "/mnt/efs_cache" ]; then
             export HF_HOME=/mnt/efs_cache
