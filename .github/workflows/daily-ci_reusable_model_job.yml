@@ -147,75 +147,8 @@ jobs:
       - name: Install kernels from source
         working-directory: /transformers
         run: |
-          echo "=== [DEBUG] Installing kernels from source ==="
           pip install git+https://github.com/huggingface/kernels#subdirectory=kernels && pip install -U urllib3
-          echo "=== [DEBUG] kernels + urllib3 install done ==="
           pip show kernels urllib3 sigstore tuf | grep -E 'Name:|Version:'
-
-      - name: Debug kernels import chain (hang detection)
-        working-directory: /transformers
-        run: |
-          echo "=== [DEBUG] Testing kernels import chain with 60s timeout per step ==="
-          python3 - <<'EOF'
-          import sys
-          import threading
-          import warnings
-          warnings.filterwarnings("ignore")
-
-          def run_with_timeout(label, fn, timeout=60):
-              result = {"done": False, "error": None}
-              def target():
-                  try:
-                      fn()
-                      result["done"] = True
-                  except Exception as e:
-                      result["error"] = e
-                      result["done"] = True
-              t = threading.Thread(target=target, daemon=True)
-              t.start()
-              t.join(timeout=timeout)
-              if not result["done"]:
-                  print(f"WARNING: [{label}] HUNG after {timeout}s - potential deadlock!", flush=True)
-              elif result["error"]:
-                  print(f"WARNING: [{label}] raised {type(result['error']).__name__}: {result['error']}", flush=True)
-              else:
-                  print(f"OK: [{label}] completed", flush=True)
-
-          run_with_timeout("import kernels",          lambda: __import__("kernels"))
-          run_with_timeout("import kernels.load",     lambda: __import__("kernels.load"))
-          run_with_timeout("import kernels.validate", lambda: __import__("kernels.validate"))
-          run_with_timeout("import kernels.verify",   lambda: __import__("kernels.verify"))
-          run_with_timeout("import sigstore.models",  lambda: __import__("sigstore.models"))
-          run_with_timeout("import tuf.ngclient",     lambda: __import__("tuf.ngclient"))
-          run_with_timeout("import urllib3",          lambda: __import__("urllib3"))
-          print("=== [DEBUG] import chain check complete ===", flush=True)
-          EOF
-
-      # OTEL observability wrapper intentionally skipped for this kernels debug run
-
-      - name: Time Python imports (debug collection slowness)
-        working-directory: /transformers
-        shell: bash
-        run: |
-          echo "=== [DEBUG] Timing: import transformers ==="
-          time python3 -c "import transformers; print('transformers imported OK')"
-
-          echo "=== [DEBUG] HF_HOME (default, Xet FUSE): ${HF_HOME}"
-          echo "=== [DEBUG] 1st collect-only (HF_HOME=${HF_HOME}, Xet FUSE) ==="
-          _cstart=$(date +%s)
-          python3 -m pytest --collect-only -q tests/models/llama/ -p no:warnings 2>&1 | tail -5
-          _cend=$(date +%s)
-          echo "=== [DEBUG] 1st collect-only (Xet FUSE) took $((_cend - _cstart))s ==="
-
-          if [ -d "/mnt/efs_cache" ]; then
-            echo "=== [DEBUG] 2nd collect-only (HF_HOME=/mnt/efs_cache, EFS) ==="
-            _cstart2=$(date +%s)
-            HF_HOME=/mnt/efs_cache python3 -m pytest --collect-only -q tests/models/llama/ -p no:warnings 2>&1 | tail -5
-            _cend2=$(date +%s)
-            echo "=== [DEBUG] 2nd collect-only (EFS) took $((_cend2 - _cstart2))s ==="
-          else
-            echo "=== [DEBUG] /mnt/efs_cache not available on this runner ==="
-          fi
 
 
       - name: Update / Install some packages (for Past CI)
@@ -293,8 +226,7 @@ jobs:
           pytest_marker: ${{ inputs.pytest_marker }}
           model: ${{ matrix.folders }}
         run: |
-          # [DEBUG] Limit to 4 specific tests for kernels investigation
-          test_path="tests/models/llama/test_modeling_llama.py::LlamaModelTest::test_can_load_with_global_device_set tests/models/llama/test_modeling_llama.py::LlamaModelTest::test_causal_lm_can_accept_training_kwargs tests/models/llama/test_modeling_llama.py::LlamaIntegrationTest::test_flash_with_static_cache tests/models/llama/test_modeling_llama.py::LlamaIntegrationTest::test_llama_3_1_hard"
+          test_path="tests/${model}"
 
           # ── EFS cache for large models with Xet FUSE OOM issues ─────────────
           # TODO: temporary workaround until Xet FUSE prefetch OOM is fixed upstream.
@@ -302,7 +234,7 @@ jobs:
           # models (>20 GB), Xet prefetch can exhaust cgroup RAM → exit 137.
           # /mnt/efs_cache is an EFS (NFS) mount pre-warmed with these weights;
           # it avoids the Xet FUSE entirely. Has no effect on other runner types.
-          EFS_MODELS="cohere2_vision deepseek_v32 exaone4 exaone4_5 gemma2 glm4_moe glm4v_moe llama4 minimax_m3_vl mistral4 muse_glimmer muse_glimmer_assistant phimoe qwen2_moe qwen3_omni_moe qwen3_vl_moe"
+          EFS_MODELS="bert cohere2_vision deepseek_v32 exaone4 exaone4_5 gemma2 gemma3 glm4_moe glm4v_moe gpt2 llama llama4 minimax_m3_vl mistral mistral4 muse_glimmer muse_glimmer_assistant phimoe qwen2_moe qwen3_omni_moe qwen3_vl_moe vit"
           model_short="${model#models/}"
           if printf '%s\n' $EFS_MODELS | grep -qx "$model_short" && [ -d "/mnt/efs_cache" ]; then
             export HF_HOME=/mnt/efs_cache
@@ -311,15 +243,7 @@ jobs:
 
           echo "HF_HOME=${HF_HOME}"
 
-          echo "=== [DEBUG] Memory before pytest ==="
-          free -h
-
-          echo "=== [DEBUG] collect-only already done in import timing step above ==="
-
-          echo "=== [DEBUG] Starting pytest at $(date) ==="
           script -q -c "PATCH_TESTING_METHODS_TO_COLLECT_OUTPUTS=yes _PATCHED_TESTING_METHODS_OUTPUT_DIR=/transformers/reports/${machine_type}_${report_name_prefix}_${matrix_folders}_test_reports python3 -m pytest -rsfE -v -m '${pytest_marker}' --make-reports=${machine_type}_${report_name_prefix}_${matrix_folders}_test_reports ${test_path}" test_outputs.txt
-          echo "=== [DEBUG] pytest exited at $(date) ==="
-          ls -la
           # Extract the exit code from the output file
           EXIT_CODE=$(tail -1 test_outputs.txt | grep -o 'COMMAND_EXIT_CODE="[0-9]*"' | cut -d'"' -f2)
           exit ${EXIT_CODE:-1}
