@@ -677,6 +677,22 @@ jobs:
 
   # ---------------------------------------------------------------------------
   # ===========================================================================
+  # Model integration contracts — observational, does not block the PR.
+  # Runs slim fixture contracts (~70s) independently of the test suite.
+  # Depends on quality_gate so it is skipped when quality checks fail.
+  # Not in ci_passed.needs for phase 1 (observational); add it for phase 2.
+  # ===========================================================================
+  contracts:
+    needs: [quality_gate]
+    if: ${{ !cancelled() && needs.quality_gate.result == 'success' }}
+    uses: huggingface/transformers-ci/.github/workflows/pr-ci_contracts.yml@main
+    with:
+      docker_image: "huggingface/transformers-torch-light"
+      runner:       "aws-m8i-l-cache"
+      tmic_sha:     "137638c8e90f777ad3a631a5f3b0e9d2a333cfe9"
+
+  # ---------------------------------------------------------------------------
+  # ===========================================================================
   # Stage 3 — Collection (equivalent of EmptyJob with job_name="collection_job")
   # Waits for all test jobs, aggregates test reports.
   # Mirrors: poll CircleCI workflow API + process_circleci_workflow_test_reports.py
