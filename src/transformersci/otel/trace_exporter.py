@@ -8793,9 +8793,49 @@ class MetricsHandler(BaseHTTPRequestHandler):
         if not isinstance(results, list):
             raise ValueError("Prometheus response incomplete")
         candidates = rerun_failed.source_candidates(pr, lambda _expr: results)
+        # GitHub status metrics include queued runs before their first test span.
+        # Scope this lookup to PR CI; run-slow's issue_comment runs have no PR
+        # label and are discovered from the bot comment below instead.
+        active_expr = (
+            "(ci_github_run_created_timestamp_seconds"
+            " * on(repository,run_id) group_left(pr,workflow,event)"
+            f' ci_github_run_info{{pr="{pr}",workflow="PR CI",event="pull_request"}})'
+            " and on(repository,run_id) (ci_github_run_status < 3)"
+        )
+        try:
+            active_payload = _http_get_json(
+                f"{base_url}/api/v1/query?{urlencode({'query': active_expr})}",
+                timeout=3,
+                upstream="prometheus",
+            )
+            active_results = active_payload.get("data", {}).get("result", [])
+        except Exception:
+            active_results = []
+        active_cpu = []
+        for item in active_results if isinstance(active_results, list) else []:
+            metric = item.get("metric") if isinstance(item, dict) else None
+            value = item.get("value") if isinstance(item, dict) else None
+            if (
+                not isinstance(metric, dict)
+                or not isinstance(value, list)
+                or len(value) < 2
+            ):
+                continue
+            run_id = str(metric.get("run_id") or "")
+            if (
+                not re.fullmatch(r"[0-9]+:[0-9]+", run_id)
+                or metric.get("repository") != "huggingface/transformers"
+            ):
+                continue
+            try:
+                active_cpu.append((float(value[1]), run_id))
+            except (TypeError, ValueError):
+                continue
+        active_cpu = sorted(active_cpu, reverse=True)[:3]
 
         def source_for(key: str) -> dict:
             source_run = None
+            active_runs = []
             notes = []
             for run_id in candidates[key][0]:
                 try:
@@ -8814,7 +8854,23 @@ class MetricsHandler(BaseHTTPRequestHandler):
                 if rerun_failed._source_run(raw, key):
                     source_run = rerun_failed._run_summary(raw, run_id)
                     break
-            return {"source_run": source_run, "active_runs": [], "notes": notes}
+            if key == "cpu":
+                for _, run_id in active_cpu:
+                    if source_run and run_id == source_run["run_id"]:
+                        continue
+                    try:
+                        raw = _rerun_github_api(
+                            f"actions/runs/{run_id.split(':', 1)[0]}"
+                        )
+                    except Exception:
+                        continue
+                    if rerun_failed._source_run(raw, key):
+                        active_runs.append(rerun_failed._run_summary(raw, run_id))
+            return {
+                "source_run": source_run,
+                "active_runs": active_runs,
+                "notes": notes,
+            }
 
         with ThreadPoolExecutor(max_workers=2) as pool:
             cpu = pool.submit(source_for, "cpu")
@@ -8858,6 +8914,30 @@ class MetricsHandler(BaseHTTPRequestHandler):
                     and pr_ci_view.matching_comment(comments, nvidia_run["run_id"])
                 ):
                     break
+
+            latest_nvidia = pr_ci_view.latest_platform_comment(comments, "nvidia")
+            latest_nvidia_body = (
+                str(latest_nvidia.get("body") or "") if latest_nvidia else ""
+            )
+            latest_nvidia_id = pr_ci_view.comparison(latest_nvidia_body, "nvidia")[
+                "run_id"
+            ]
+            if latest_nvidia_id and (
+                not nvidia_run
+                or latest_nvidia_id != nvidia_run["run_id"].split(":", 1)[0]
+            ):
+                try:
+                    raw = _rerun_github_api(f"actions/runs/{latest_nvidia_id}")
+                    if rerun_failed._source_run(raw, "gpu"):
+                        attempt = raw.get("run_attempt") or 1
+                        sources["gpu"]["active_runs"].append(
+                            rerun_failed._run_summary(
+                                raw, f"{latest_nvidia_id}:{attempt}"
+                            )
+                        )
+                except Exception:
+                    pass
+            nvidia_run = pr_ci_view.newest_run(sources["gpu"])
 
             def jobs_for(run_id: str) -> tuple[list[dict], list[str]]:
                 jobs: list[dict] = []

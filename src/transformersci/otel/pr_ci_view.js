@@ -163,7 +163,10 @@
       name.append(lane.run ? link(jobLink(lane, job), job.name) : node('span', '', job.name));
       tr.append(name);
       const status = node('td', 'status-cell');
-      if (live(job.status)) status.append(node('span', 'live'));
+      if (live(job.status)) {
+        status.append(node('span', 'live'));
+        status.append(node('span', 'running-text', job.status === 'in_progress' ? 'running' : job.status));
+      }
       else {
         const badge = node('span', 'state ' + statusClass(job.status), job.status === 'recorded' ? 'tests recorded' : job.status.replaceAll('_', ' '));
         if (job.status === 'recorded') badge.title = 'Test results were recorded, but no matching GitHub job status was found.';

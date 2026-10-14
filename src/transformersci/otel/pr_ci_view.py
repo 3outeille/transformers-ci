@@ -126,12 +126,14 @@ def summarize_jobs(raw_jobs: list[dict], rows: list[dict], lane: str) -> list[di
         )
         status = str(raw.get("conclusion") or raw.get("status") or "")
         priority = {
+            "in_progress": 6,
+            "queued": 6,
+            "waiting": 6,
+            "requested": 6,
+            "pending": 6,
             "failure": 5,
             "timed_out": 5,
             "startup_failure": 5,
-            "in_progress": 4,
-            "queued": 4,
-            "waiting": 4,
             "success": 3,
             "cancelled": 2,
             "skipped": 1,
