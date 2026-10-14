@@ -2725,15 +2725,15 @@
     "name": "dashboard_version",
     "type": "constant",
     "label": "Dashboard version",
-    "query": "0.2.10",
+    "query": "0.2.11",
     "current": {
-     "text": "0.2.10",
-     "value": "0.2.10"
+     "text": "0.2.11",
+     "value": "0.2.11"
     },
     "options": [
      {
-      "text": "0.2.10",
-      "value": "0.2.10",
+      "text": "0.2.11",
+      "value": "0.2.11",
       "selected": true
      }
     ],
