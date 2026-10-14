@@ -3,13 +3,17 @@
   'use strict';
   const mineButton = document.getElementById('mine');
   const openButton = document.getElementById('open');
+  const dayButtons = [...document.querySelectorAll('[data-days]')];
   const status = document.getElementById('status');
   const rows = document.getElementById('rows');
   const empty = document.getElementById('empty');
-  const storage = (key) => { try { return localStorage.getItem(key) === 'true'; } catch (_) { return false; } };
+  const stored = (key) => { try { return localStorage.getItem(key); } catch (_) { return null; } };
+  const storage = (key) => stored(key) === 'true';
   const save = (key, value) => { try { localStorage.setItem(key, String(value)); } catch (_) {} };
   let mine = storage('tci-my-stuff');
   let hideClosed = storage('tci-hide-closed-prs');
+  const storedDays = Number(stored('tci-pr-days'));
+  let days = [7, 14, 21].includes(storedDays) ? storedDays : 7;
   let minePrs = null;
   let mineUntil = 0;
   let queryConfig = null;
@@ -26,6 +30,7 @@
   function switches() {
     mineButton.setAttribute('aria-checked', String(mine));
     openButton.setAttribute('aria-checked', String(hideClosed));
+    dayButtons.forEach(button => button.setAttribute('aria-pressed', String(Number(button.dataset.days) === days)));
   }
   function message(value, error = false) {
     status.textContent = value;
@@ -102,16 +107,16 @@
     if (!original.startsWith(prefix) || !original.endsWith('))')) throw new Error('Invalid PR query configuration');
     const base = original.slice(prefix.length, -2);
     const scope = prs ? (prs.length ? prs.join('|') : '0') : '[0-9]+';
-    const activity = base.replaceAll('${pr_scope:raw}', scope);
+    const activity = base.replaceAll('${pr_scope:raw}', scope).replaceAll('[7d]', `[${days}d]`);
     const visible = hideClosed
-      ? `(${activity}) unless on (pr) (max by (pr) (last_over_time(pytest_pr_state[7d])) != 1)`
+      ? `(${activity}) unless on (pr) (max by (pr) (last_over_time(pytest_pr_state[${days}d])) != 1)`
       : activity;
-    return `topk(10, ${visible})`;
+    return `topk(10, (${visible}) > (time() - ${days * 86400}))`;
   }
   function targets(prs) {
     const scope = prs.join('|');
     return Object.fromEntries(Object.entries(queryConfig.targets).map(([key, expr]) =>
-      [key, expr.replaceAll('$top_prs', scope)]));
+      [key, expr.replaceAll('$top_prs', scope).replace(/\[7d(:?)\]/g, `[${days}d$1]`)]));
   }
   function text(value) { return value == null ? '' : String(value); }
   function cell(value, className = '') {
@@ -251,6 +256,14 @@
     switches();
     refresh();
   });
+  dayButtons.forEach(button => button.addEventListener('click', () => {
+    const selected = Number(button.dataset.days);
+    if (selected === days) return;
+    days = selected;
+    save('tci-pr-days', days);
+    switches();
+    refresh();
+  }));
   switches();
   window.addEventListener('storage', event => {
     if (event.key !== 'tci-pr-auth-complete' || !signInPending) return;
