@@ -127,26 +127,31 @@ def test_render_full_failure_page():
         }
     )
 
+    # Duration cell: date · relative · duration; the exact time is the tooltip.
+    assert (
+        "Oct 13<span class='sep'>·</span><span data-ts='1791897922' "
+        "title='2026-10-13 13:25 UTC'>" in page
+    )
+    assert "<span class='sep'>·</span>1.1 s</div>" in page
+    # Net change -91.5 KiB: no leak, readings in the tooltip.
+    assert "<div class='v good'>No</div>" in page
+    assert (
+        "inherited 16.3 MiB · left for next test 16.3 MiB · net change -91.5 KiB"
+        in page
+    )
+    assert "Serge Actions</div><iframe" in page
     for text in (
         "aws-g5-12xlarge-cache · xGPU",
         "pytest -svx &#x27;" + NODE + "&#x27;",
-        "1.1 s",
-        "16.3 MiB",
-        "-91.5 KiB",
-        "2026-10-13 13:25 UTC",
         "ImportError",
         "Potential related issues",
         "/serge-actions?",
     ):
         assert text in page, text
-    # Grafana pages open in the top window (the page will run in an iframe).
-    assert (
-        "href='/d/pytest-observability-by-run/pytest-observability-run?var-run_id=38401932908%3A1' target='_top'"
-        in page
-    )
-    assert "/failure/job-page?" in page
-    # Like the Grafana page's PR link, main opens the Branch page for main.
-    assert "pytest-observability-branch?var-pr=main' target='_top'" in page
+    # No Run/Job/PR buttons: in Grafana the dashboard's own link bar has them.
+    assert "pytest-observability-run?" not in page
+    # The Job chip opens the Job page in the top window (the page runs in an iframe).
+    assert "/failure/job-page?" in page and "target='_top'" in page
 
 
 def test_render_passed_and_missing_trace():
@@ -160,6 +165,22 @@ def test_render_passed_and_missing_trace():
     missing = tp.render_test_page({"test_nodeid": NODE, "trace_id": TRACE})
     assert "Trace not found." in missing
     assert "No trace selected." in tp.render_test_page({"test_nodeid": NODE})
+
+
+def test_memory_leak_cell():
+    assert tp.memory_leak({"cuda_delta_bytes": 2 * 1024**2})[:2] == ("+2.0 MiB", "bad")
+    assert tp.memory_leak({"cuda_delta_bytes": 0.0})[:2] == ("No", "good")
+    # No reading (CPU job, older plugin) is unknown, never "No".
+    assert tp.memory_leak({})[:2] == ("—", "unknown")
+    page = tp.render_test_page({"test_nodeid": NODE, "cuda_delta_bytes": 4096.0})
+    assert "<div class='v bad'>+4.0 KiB</div>" in page
+
+
+def test_compact_ago():
+    assert tp.compact_ago(10) == "just now"
+    assert tp.compact_ago(16 * 3600 + 5) == "16h ago"
+    assert tp.compact_ago(3 * 86400) == "3d ago"
+    assert tp.compact_ago(200 * 86400) == "6mo ago"
 
 
 def test_reproduce_command_and_formatting():

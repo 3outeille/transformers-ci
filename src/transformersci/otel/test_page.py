@@ -34,15 +34,12 @@ STYLE = """
 :root{color-scheme:dark;--bg:#111217;--panel:#181b1f;--line:#2c3038;--soft:#22252b;
 --text:#d8d9da;--muted:#8e9197;--link:#6ab0ff;--red:#ff7383;--green:#73bf69;--amber:#f2cc60}
 *{box-sizing:border-box}
-html,body{margin:0;background:var(--bg);color:var(--text);font:13px/1.5 Inter,system-ui,sans-serif}
+html,body{margin:0;background:var(--panel);color:var(--text);font:13px/1.5 Inter,system-ui,sans-serif}
 a{color:var(--link);text-decoration:none}a:hover{text-decoration:underline}
 .gh{vertical-align:-1px;margin-left:3px}
-.page{max-width:1800px;margin:0 auto;padding:12px 16px 24px}
-.nav{display:flex;gap:6px;margin:0 0 12px}
-.nav a{padding:4px 10px;border:1px solid var(--line);border-radius:4px;color:var(--text);
-background:var(--panel);font-size:12px}
-.nav a:hover{text-decoration:none;border-color:#4a5160}
-.card{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:14px 16px}
+.page{max-width:1800px;margin:0 auto;padding:16px 16px 24px}
+.card{min-width:0}
+.head{padding:0 0 14px;border-bottom:1px solid var(--line)}
 h1{font:600 18px/1.3 Inter,system-ui,sans-serif;margin:0 0 10px;overflow-wrap:anywhere}
 h2{font:600 14px/1.3 Inter,system-ui,sans-serif;margin:0 0 10px}
 .chips{list-style:none;margin:0;padding:0;display:flex;flex-wrap:wrap;gap:6px}
@@ -58,13 +55,18 @@ border-radius:4px;background:rgba(204,204,220,.04);font:13px/1.45 ui-monospace,S
 white-space:pre-wrap;overflow-wrap:anywhere}
 button{background:#242b35;color:var(--text);border:1px solid #657083;border-radius:4px;
 padding:4px 12px;cursor:pointer;font:inherit}
-.stats{display:flex;flex-wrap:wrap;gap:8px;margin:12px 0}
-.stat{flex:1 1 140px;background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:8px 12px}
+.stats{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr) minmax(0,2fr);padding:12px 0;margin:0 0 16px;border-bottom:1px solid var(--line)}
+@media (max-width:900px){.stats{grid-template-columns:minmax(0,1fr)}.stats .stat+.stat{border-left:0;padding-left:0;border-top:1px solid var(--line);margin-top:10px;padding-top:10px}}
+.stat{min-width:0;padding:0 16px 0 0}.stat+.stat{border-left:1px solid var(--line);padding-left:16px}
 .stat .k{color:var(--muted);font-size:11px}.stat .v{font-size:18px;font-weight:500;margin-top:2px}
-.stat .v.up{color:var(--red)}.stat .v.down{color:var(--green)}
-.grid{display:grid;grid-template-columns:minmax(0,3fr) minmax(320px,2fr);gap:12px;align-items:start}
-@media (max-width:1100px){.grid{grid-template-columns:minmax(0,1fr)}}
-.side{display:flex;flex-direction:column;gap:12px}
+.stat .v .sep{color:var(--muted);margin:0 6px}
+.stat .v.bad{color:var(--red)}.stat .v.good{color:var(--green)}.stat .v.unknown{color:var(--muted)}
+.grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:24px;align-items:start}
+#issues{position:sticky;top:12px;display:flex;flex-direction:column;min-height:180px;max-height:calc(100dvh - 24px);border:1px solid var(--line);border-radius:5px;background:var(--panel)}
+#issues h2{margin:0;padding:12px;border-bottom:1px solid var(--line)}
+#issues .status{margin:0;padding:12px}
+#issues ul{flex:1;overflow-y:auto;min-height:0;padding:12px}
+@media (max-width:1100px){.grid{grid-template-columns:minmax(0,1fr)}#issues{position:static;max-height:75dvh}}
 .exc{color:var(--amber);font:600 15px/1.3 Inter,system-ui,sans-serif;margin:0 0 2px}
 .where{color:var(--muted);font-size:12px;margin:0 0 4px;overflow-wrap:anywhere}
 .label{margin:14px 0 4px;color:var(--muted);font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.05em}
@@ -75,22 +77,23 @@ pre.msg{color:#ff8a80;max-height:none}
 .detail+.detail{margin-top:18px;padding-top:18px;border-top:1px solid var(--line)}
 .empty{color:var(--muted)}
 .passed{color:var(--green);font-weight:600}
-#issues ul{list-style:none;margin:0;padding:0}
-#issues li{padding:8px 0;border-top:1px solid var(--line)}
+#issues ul{list-style:none;margin:0}
+#issues li{border:1px solid var(--line);border-radius:4px;padding:10px;margin:0 0 10px;background:var(--bg)}
+#issues li:last-child{margin-bottom:0}
 #issues .meta{color:var(--muted);font-size:12px;margin:1px 0}
 #issues .snippet{color:#aeb7c2;font-size:12px;overflow-wrap:anywhere;display:-webkit-box;
 -webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
-iframe.serge{width:100%;height:150px;border:0;display:block}
+iframe.serge{width:100%;height:84px;border:0;display:block;margin-top:2px}
 """
 
 SCRIPT = r"""
 const ctx=JSON.parse(document.getElementById('ctx').textContent);
+const AGO_UNITS=[['y',31536000],['mo',2592000],['d',86400],['h',3600],['m',60]];
 function ago(seconds){
   if(seconds<45)return 'just now';
-  const units=[['year',31536000],['month',2592000],['day',86400],['hour',3600],['minute',60]];
-  for(const [name,size] of units){
+  for(const [suffix,size] of AGO_UNITS){
     const n=Math.floor(seconds/size);
-    if(n>=1)return n+' '+name+(n===1?'':'s')+' ago';
+    if(n>=1)return n+suffix+' ago';
   }
   return 'just now';
 }
@@ -167,6 +170,47 @@ def format_bytes(value: float | None, *, signed: bool = False) -> str:
     return sign + f"{size:.1f} GiB"  # pragma: no cover - loop always returns
 
 
+def compact_ago(seconds: float) -> str:
+    """Server-side first paint of the client's relative time ("16h ago")."""
+    if seconds < 45:
+        return "just now"
+    for suffix, size in (
+        ("y", 31536000),
+        ("mo", 2592000),
+        ("d", 86400),
+        ("h", 3600),
+        ("m", 60),
+    ):
+        if seconds >= size:
+            return f"{int(seconds // size)}{suffix} ago"
+    return "just now"
+
+
+def memory_leak(data: dict) -> tuple[str, str, str]:
+    """(text, css class, tooltip) for the Memory leak cell.
+
+    A leak is device memory the test left allocated beyond what it inherited
+    (``pytest.cuda_delta_bytes`` > 0). Without the reading (CPU jobs, older
+    plugin) it is unknown, never "No".
+    """
+    delta = data.get("cuda_delta_bytes")
+    inherited = data.get("cuda_inherited_bytes")
+    retained = data.get("cuda_retained_bytes")
+    parts = [
+        f"{label} {format_bytes(value)}"
+        for label, value in (("inherited", inherited), ("left for next test", retained))
+        if value is not None
+    ]
+    if delta is None:
+        return "—", "unknown", "No device-memory reading for this test"
+    parts.append(f"net change {format_bytes(delta, signed=True)}")
+    return (
+        (format_bytes(delta, signed=True), "bad", " · ".join(parts))
+        if delta > 0
+        else ("No", "good", " · ".join(parts))
+    )
+
+
 def reproduce_command(nodeid: str) -> str:
     quoted = "'" + nodeid.replace("'", "'\"'\"'") + "'"
     if nodeid.startswith("utils/checkers.py::"):
@@ -225,26 +269,6 @@ def render_test_page(data: dict) -> str:
         if job and run_id
         else ""
     )
-    nav = []
-    if run_id:
-        nav.append(
-            (
-                "Run",
-                "/d/pytest-observability-by-run/pytest-observability-run?"
-                + urlencode({"var-run_id": run_id}),
-            )
-        )
-    if job_page:
-        nav.append(("Job", job_page))
-    if pr and pr != "none":
-        nav.append(
-            (
-                "PR",
-                "/d/pytest-observability-by-pr/pytest-observability-branch?"
-                + urlencode({"var-pr": pr}),
-            )
-        )
-
     runner = " · ".join(
         part
         for part in (
@@ -298,15 +322,8 @@ def render_test_page(data: dict) -> str:
         f"<title>{esc(node.split('::')[-1] or 'Test')} · Test</title>",
         f"<style>{STYLE}</style></head><body><div class='page'>",
     ]
-    if nav:
-        out.append("<nav class='nav'>")
-        out.extend(
-            f"<a href='{esc(url)}' target='_top'>{esc(label)}</a>" for label, url in nav
-        )
-        out.append("</nav>")
-
     # Header: identity, links, reproduce.
-    out.append(f"<section class='card'><h1>{esc(node) or 'No test selected'}</h1>")
+    out.append(f"<section class='card head'><h1>{esc(node) or 'No test selected'}</h1>")
     chip_html = [
         f"<li class='{'status-' + esc(status) if key == 'status' else ''}'>"
         f"<span class='k'>{esc(label)}</span>{value}</li>"
@@ -323,41 +340,49 @@ def render_test_page(data: dict) -> str:
         )
     out.append("</section>")
 
-    # Stats: timing, then device memory when the span carries it.
-    stats: list[tuple[str, str, str]] = [
-        ("Duration", format_duration(data.get("duration_seconds")), "")
-    ]
+    # One row: when and how long, whether it leaked device memory, Serge Actions.
+    out.append("<section class='stats'>")
+    when = []
     started = data.get("started_at")
     if started:
-        stamp = time.strftime("%Y-%m-%d %H:%M UTC", time.gmtime(float(started)))
-        stats.append(
-            (
-                "Started",
-                f"<span data-ts='{float(started):.0f}' title='{esc(stamp)}'>{esc(stamp)}</span>",
-                "raw",
-            )
+        moment = time.gmtime(float(started))
+        stamp = time.strftime("%Y-%m-%d %H:%M UTC", moment)
+        when.append(f"{time.strftime('%b', moment)} {moment.tm_mday}")
+        when.append(
+            f"<span data-ts='{float(started):.0f}' title='{esc(stamp)}'>"
+            f"{esc(compact_ago(time.time() - float(started)))}</span>"
         )
-    inherited = data.get("cuda_inherited_bytes")
-    retained = data.get("cuda_retained_bytes")
-    delta = data.get("cuda_delta_bytes")
-    if inherited is not None:
-        stats.append(("Device memory inherited", format_bytes(inherited), ""))
-    if retained is not None:
-        stats.append(("Left for next test", format_bytes(retained), ""))
-    if delta is not None:
-        trend = "up" if delta > 0 else "down" if delta < 0 else ""
-        stats.append(("Net change", format_bytes(delta, signed=True), trend))
-    out.append("<section class='stats'>")
-    for label, value, extra in stats:
-        value_html = value if extra == "raw" else esc(value)
-        cls = f"v {extra}" if extra in ("up", "down") else "v"
-        out.append(
-            f"<div class='stat'><div class='k'>{esc(label)}</div>"
-            f"<div class='{cls}'>{value_html}</div></div>"
-        )
+    when.append(esc(format_duration(data.get("duration_seconds"))))
+    out.append(
+        "<div class='stat'><div class='k'>Duration</div><div class='v'>"
+        + "<span class='sep'>·</span>".join(when)
+        + "</div></div>"
+    )
+    leak, leak_class, leak_title = memory_leak(data)
+    out.append(
+        f"<div class='stat' title='{esc(leak_title)}'><div class='k'>Memory leak</div>"
+        f"<div class='v {leak_class}'>{esc(leak)}</div></div>"
+    )
+    serge_query = urlencode(
+        {
+            "trace_id": trace_id,
+            "latest_trace": "",
+            "test_nodeid": node,
+            "status": status,
+            "module": str(data.get("module") or ""),
+            "job": job,
+            "pr": pr,
+            "run_id": run_id,
+        }
+    )
+    out.append(
+        "<div class='stat'><div class='k'>✨🦄 Serge Actions</div>"
+        f"<iframe class='serge' title='Serge actions' src='/serge-actions?{esc(serge_query)}'></iframe>"
+        "</div>"
+    )
     out.append("</section>")
 
-    # Failure (left) | related issues + Serge Actions (right).
+    # Failure | related issues, half the width each.
     out.append("<div class='grid'><section class='card'>")
     if details:
         for detail in details:
@@ -404,30 +429,13 @@ def render_test_page(data: dict) -> str:
         )
     else:
         out.append("<p class='passed'>This test passed in this run.</p>")
-    out.append("</section><aside class='side'>")
+    out.append("</section>")
     out.append(
         "<section class='card' id='issues'><h2>Potential related issues</h2>"
         "<p class='status empty' role='status' aria-live='polite'>Searching related issues…</p>"
         "<ul></ul></section>"
     )
-    serge_query = urlencode(
-        {
-            "trace_id": trace_id,
-            "latest_trace": "",
-            "test_nodeid": node,
-            "status": status,
-            "module": str(data.get("module") or ""),
-            "job": job,
-            "pr": pr,
-            "run_id": run_id,
-        }
-    )
-    out.append(
-        "<section class='card'><h2>✨🦄 Serge Actions</h2>"
-        f"<iframe class='serge' title='Serge actions' src='/serge-actions?{esc(serge_query)}'></iframe>"
-        "</section>"
-    )
-    out.append("</aside></div></div>")
+    out.append("</div></div>")
     context = {"trace_id": trace_id, "test_nodeid": node}
     # json.dumps escapes neither "<" nor "/", so close-tag injection is
     # neutralised by escaping "<" explicitly.
