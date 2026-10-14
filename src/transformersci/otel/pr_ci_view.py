@@ -88,7 +88,7 @@ def newest_run(lane: dict) -> dict | None:
 def _job_identity(name: str, lane: str) -> tuple[str, str] | None:
     if lane == "cpu":
         match = re.search(
-            r"^pr-ci / ((?:tests_|pipelines_)[a-z0-9_]+|Check (?:code quality|repository consistency))",
+            r"^pr-ci / ((?:tests_|pipelines_|examples_)[a-z0-9_]+|Check (?:code quality|repository consistency))",
             name,
         )
         if not match or "Setup —" in name or "Collect" in name:
@@ -155,7 +155,7 @@ def summarize_jobs(raw_jobs: list[dict], rows: list[dict], lane: str) -> list[di
             {
                 "name": job,
                 "hardware": hardware,
-                "status": "unknown",
+                "status": "recorded",
                 "pass": None,
                 "fail": None,
                 "started_at": "",

@@ -34,6 +34,11 @@
     return item;
   };
   const runLink = run => run.url || `https://github.com/huggingface/transformers/actions/runs/${String(run.run_id).split(':')[0]}`;
+  const jobLink = (lane, job) => {
+    const query = new URLSearchParams({'var-job': job.name, 'var-run_id': lane.run.run_id,
+      'var-pr': pr, 'var-hardware': job.hardware, from: 'now-90d', to: 'now'});
+    return `/d/pytest-observability-by-job/pytest-observability-job?${query}`;
+  };
   const live = status => ['in_progress', 'queued', 'waiting', 'requested', 'pending'].includes(status);
   const statusClass = status => ['failure', 'timed_out', 'startup_failure'].includes(status) ? 'failure' : status === 'success' ? 'success' : live(status) ? 'running' : ['skipped', 'cancelled'].includes(status) ? status : 'unknown';
   const laneName = (lane, hardware) => lane.id === 'cpu' ? 'CPU' : lane.id === 'amd' ? (hardware === 'amd-2gpu' ? 'AMD xGPU' : 'AMD GPU') : (hardware === 'multi-gpu' ? 'Nvidia xGPU' : 'Nvidia GPU');
@@ -51,28 +56,6 @@
       runs.append(card);
     }
   }
-  function comparisonCard(lane) {
-    const comparison = lane.comparison;
-    if (!comparison) return null;
-    const card = node('div', 'comparison ' + (comparison.state === 'complete' ? '' : comparison.state === 'pending' ? 'pending' : 'bad'));
-    const count = comparison.specific.length;
-    const summary = comparison.state === 'complete'
-      ? count ? `${count} failure${count === 1 ? '' : 's'} attributed to this PR` : 'No failures attributed to this PR'
-      : comparison.state === 'pending' ? 'PR-specific analysis pending' : 'PR-specific analysis unavailable';
-    card.append(node('strong', '', `${lane.label}: ${summary}`));
-    const meta = node('div', 'meta');
-    for (const key of ['run', 'pr', 'main']) {
-      const sha = comparison.commits[key];
-      if (!sha) continue;
-      const part = node('span', '', `${key.toUpperCase()} `);
-      part.append(link(`https://github.com/huggingface/transformers/commit/${sha}`, sha.slice(0, 8)));
-      meta.append(part);
-    }
-    if (comparison.run_id && lane.run) meta.append(link(runLink(lane.run), 'Workflow and report'));
-    if (comparison.report_url) meta.append(link(comparison.report_url, 'Full comparison'));
-    card.append(meta);
-    return card;
-  }
   function testLink(lane, test) {
     if (!/^[0-9a-f]{32}$/.test(test.trace_id) || !lane.run) return null;
     const query = new URLSearchParams({orgId: '1', 'var-trace_id': test.trace_id,
@@ -82,10 +65,8 @@
   }
   function visibleFailures() {
     const listed = [];
-    let pending = false;
     for (const lane of snapshot.lanes) {
       const filterable = lane.id !== 'cpu' && lane.comparison?.state === 'complete';
-      if (onlySpecific.checked && lane.id !== 'cpu' && !filterable && lane.failures.length) pending = true;
       for (const test of lane.failures) {
         if (onlySpecific.checked && filterable && test.specific !== true) continue;
         const text = `${test.nodeid} ${test.job} ${test.model || ''} ${test.exception_type || ''} ${test.exception_message || ''} ${lane.label}`.toLowerCase();
@@ -93,7 +74,7 @@
         listed.push({lane, test});
       }
     }
-    return {listed, pending};
+    return listed;
   }
   function groupKey(item) {
     const {test} = item;
@@ -143,15 +124,9 @@
     if (!snapshot) return;
     const opened = new Set([...failures.querySelectorAll('details[open]')].map(item => item.dataset.key));
     failures.replaceChildren();
-    for (const lane of snapshot.lanes) {
-      const card = comparisonCard(lane);
-      if (card) failures.append(card);
-      for (const note of lane.notes || []) failures.append(node('div', 'notice', `${lane.label}: ${note}`));
-    }
-    const {listed, pending} = visibleFailures();
-    if (pending) failures.append(node('div', 'notice', 'Comparison pending; unclassified run-slow failures remain visible.'));
+    const listed = visibleFailures();
     if (!listed.length) {
-      failures.append(node('div', 'notice', search.value ? 'No matching failing tests.' : onlySpecific.checked ? 'No PR-specific run-slow failures in these runs.' : 'No failing tests in the latest available runs.'));
+      failures.append(node('div', 'notice', search.value ? 'No matching failures.' : 'No failing tests.'));
       return;
     }
     failures.append(node('div', 'summary', `${listed.length} failing test${listed.length === 1 ? '' : 's'}${group === 'none' ? ' · longest first' : ''}`));
@@ -185,11 +160,15 @@
       const tr = node('tr');
       tr.append(node('td', '', laneName(lane, job.hardware)));
       const name = node('td');
-      name.append(job.url ? link(job.url, job.name) : node('span', '', job.name));
+      name.append(lane.run ? link(jobLink(lane, job), job.name) : node('span', '', job.name));
       tr.append(name);
       const status = node('td', 'status-cell');
       if (live(job.status)) status.append(node('span', 'live'));
-      else status.append(node('span', 'state ' + statusClass(job.status), job.status.replaceAll('_', ' ')));
+      else {
+        const badge = node('span', 'state ' + statusClass(job.status), job.status === 'recorded' ? 'tests recorded' : job.status.replaceAll('_', ' '));
+        if (job.status === 'recorded') badge.title = 'Test results were recorded, but no matching GitHub job status was found.';
+        status.append(badge);
+      }
       tr.append(status, node('td', 'dur', job.pass ?? '—'), node('td', 'dur', job.fail ?? '—'));
       jobs.append(tr);
     }

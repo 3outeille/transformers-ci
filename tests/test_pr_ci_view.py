@@ -8,6 +8,35 @@ from urllib.request import urlopen
 from transformersci.otel import pr_ci_view, trace_exporter
 
 
+def test_examples_job_uses_github_status() -> None:
+    raw_jobs = [
+        {
+            "name": "pr-ci / examples_torch / examples_torch [shard 0/1]",
+            "status": "completed",
+            "conclusion": "success",
+            "html_url": "https://github.com/huggingface/transformers/actions/runs/1/job/2",
+        }
+    ]
+    rows = [
+        {
+            "test_job": "examples_torch",
+            "hardware": "cpu",
+            "status_code": "OK",
+        }
+    ]
+    assert pr_ci_view.summarize_jobs(raw_jobs, rows, "cpu") == [
+        {
+            "name": "examples_torch",
+            "hardware": "cpu",
+            "status": "success",
+            "pass": 1,
+            "fail": None,
+            "started_at": "",
+            "url": "https://github.com/huggingface/transformers/actions/runs/1/job/2",
+        }
+    ]
+
+
 def test_source_lookup_selects_latest_valid_run_per_lane(monkeypatch) -> None:
     monkeypatch.setattr(
         trace_exporter, "prometheus_base_url", lambda: "http://prometheus"
