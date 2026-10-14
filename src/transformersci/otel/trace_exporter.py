@@ -8793,49 +8793,41 @@ class MetricsHandler(BaseHTTPRequestHandler):
         if not isinstance(results, list):
             raise ValueError("Prometheus response incomplete")
         candidates = rerun_failed.source_candidates(pr, lambda _expr: results)
-        # GitHub status metrics include queued runs before their first test span.
-        # Scope this lookup to PR CI; run-slow's issue_comment runs have no PR
-        # label and are discovered from the bot comment below instead.
-        active_expr = (
-            "(ci_github_run_created_timestamp_seconds"
-            " * on(repository,run_id) group_left(pr,workflow,event)"
-            f' ci_github_run_info{{pr="{pr}",workflow="PR CI",event="pull_request"}})'
-            " and on(repository,run_id) (ci_github_run_status < 3)"
-        )
-        try:
-            active_payload = _http_get_json(
-                f"{base_url}/api/v1/query?{urlencode({'query': active_expr})}",
-                timeout=3,
-                upstream="prometheus",
-            )
-            active_results = active_payload.get("data", {}).get("result", [])
-        except Exception:
-            active_results = []
-        active_cpu = []
-        for item in active_results if isinstance(active_results, list) else []:
-            metric = item.get("metric") if isinstance(item, dict) else None
-            value = item.get("value") if isinstance(item, dict) else None
-            if (
-                not isinstance(metric, dict)
-                or not isinstance(value, list)
-                or len(value) < 2
-            ):
-                continue
-            run_id = str(metric.get("run_id") or "")
-            if (
-                not re.fullmatch(r"[0-9]+:[0-9]+", run_id)
-                or metric.get("repository") != "huggingface/transformers"
-            ):
-                continue
+
+        def active_cpu_runs() -> list[dict]:
+            # The status exporter can lose its in-memory run list during a
+            # restart. GitHub's current head and workflow list are authoritative
+            # even before any test span exists for a queued run.
             try:
-                active_cpu.append((float(value[1]), run_id))
-            except (TypeError, ValueError):
-                continue
-        active_cpu = sorted(active_cpu, reverse=True)[:3]
+                pull = _rerun_github_api(f"pulls/{pr}")
+                head = pull.get("head") if isinstance(pull, dict) else None
+                sha = str(head.get("sha") or "") if isinstance(head, dict) else ""
+                if not re.fullmatch(r"[0-9a-f]{40}", sha):
+                    return []
+                payload = _rerun_github_api(
+                    "actions/workflows/pr-ci-caller.yml/runs"
+                    f"?event=pull_request&head_sha={sha}&per_page=10"
+                )
+                runs = (
+                    payload.get("workflow_runs") if isinstance(payload, dict) else None
+                )
+                if not isinstance(runs, list):
+                    return []
+                return [
+                    rerun_failed._run_summary(
+                        raw, f"{raw['id']}:{raw.get('run_attempt') or 1}"
+                    )
+                    for raw in runs
+                    if isinstance(raw, dict)
+                    and raw.get("status") in rerun_failed.ACTIVE_STATUSES
+                    and raw.get("head_sha") == sha
+                    and rerun_failed._source_run(raw, "cpu")
+                ][:3]
+            except Exception:
+                return []
 
         def source_for(key: str) -> dict:
             source_run = None
-            active_runs = []
             notes = []
             for run_id in candidates[key][0]:
                 try:
@@ -8854,28 +8846,19 @@ class MetricsHandler(BaseHTTPRequestHandler):
                 if rerun_failed._source_run(raw, key):
                     source_run = rerun_failed._run_summary(raw, run_id)
                     break
-            if key == "cpu":
-                for _, run_id in active_cpu:
-                    if source_run and run_id == source_run["run_id"]:
-                        continue
-                    try:
-                        raw = _rerun_github_api(
-                            f"actions/runs/{run_id.split(':', 1)[0]}"
-                        )
-                    except Exception:
-                        continue
-                    if rerun_failed._source_run(raw, key):
-                        active_runs.append(rerun_failed._run_summary(raw, run_id))
             return {
                 "source_run": source_run,
-                "active_runs": active_runs,
+                "active_runs": [],
                 "notes": notes,
             }
 
-        with ThreadPoolExecutor(max_workers=2) as pool:
+        with ThreadPoolExecutor(max_workers=3) as pool:
             cpu = pool.submit(source_for, "cpu")
             gpu = pool.submit(source_for, "gpu")
-            return {"cpu": cpu.result(), "gpu": gpu.result()}
+            active_cpu = pool.submit(active_cpu_runs)
+            cpu_lane = cpu.result()
+            cpu_lane["active_runs"] = active_cpu.result()
+            return {"cpu": cpu_lane, "gpu": gpu.result()}
 
     def _serve_pr_ci_view(self, params: dict[str, list[str]]) -> None:
         pr = (params.get("pr") or [""])[0].strip()

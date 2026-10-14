@@ -60,22 +60,7 @@ def test_source_lookup_includes_active_run_without_test_telemetry(monkeypatch) -
         trace_exporter, "prometheus_base_url", lambda: "http://prometheus"
     )
 
-    def query(url: str, **_kwargs) -> dict:
-        if "ci_github_run_created_timestamp_seconds" in url:
-            return {
-                "status": "success",
-                "data": {
-                    "result": [
-                        {
-                            "metric": {
-                                "run_id": "200:1",
-                                "repository": "huggingface/transformers",
-                            },
-                            "value": [0, "200"],
-                        }
-                    ]
-                },
-            }
+    def query(_url: str, **_kwargs) -> dict:
         return {
             "status": "success",
             "data": {
@@ -89,17 +74,35 @@ def test_source_lookup_includes_active_run_without_test_telemetry(monkeypatch) -
         }
 
     monkeypatch.setattr(trace_exporter, "_http_get_json", query)
+
+    def api(path: str) -> dict:
+        if path == "pulls/49607":
+            return {"head": {"sha": "a" * 40}}
+        if path.startswith("actions/workflows/pr-ci-caller.yml/runs?"):
+            return {
+                "workflow_runs": [
+                    {
+                        "id": 200,
+                        "run_attempt": 1,
+                        "path": ".github/workflows/pr-ci-caller.yml",
+                        "event": "pull_request",
+                        "head_sha": "a" * 40,
+                        "status": "in_progress",
+                        "created_at": "2026-10-14T12:00:00Z",
+                    }
+                ]
+            }
+        return {
+            "path": ".github/workflows/pr-ci-caller.yml@main",
+            "event": "pull_request",
+            "status": "completed",
+            "created_at": "2026-10-14T11:00:00Z",
+        }
+
     monkeypatch.setattr(
         trace_exporter,
         "_rerun_github_api",
-        lambda path: {
-            "path": ".github/workflows/pr-ci-caller.yml@main",
-            "event": "pull_request",
-            "status": "in_progress" if path.endswith("200") else "completed",
-            "created_at": "2026-10-14T12:00:00Z"
-            if path.endswith("200")
-            else "2026-10-14T11:00:00Z",
-        },
+        api,
     )
     sources = object.__new__(trace_exporter.MetricsHandler)._pr_ci_sources("49607")
     assert sources["cpu"]["source_run"]["run_id"] == "100:1"
