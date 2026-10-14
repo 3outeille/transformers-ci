@@ -78,6 +78,7 @@ from transformersci.otel import wdyt
 from transformersci.otel import who_can_help
 from transformersci.otel import new_issue
 from transformersci.otel import patch_view
+from transformersci.otel import pr_ci_view
 from transformersci.otel import probable_fix
 from transformersci.otel import test_page
 
@@ -8315,6 +8316,23 @@ class MetricsHandler(BaseHTTPRequestHandler):
             self._request_route = "/rerun-failed/data"
             self._serve_rerun_failed_data(parse_qs(parsed.query))
             return
+        if parsed.path in {"/pr-ci-view", "/pr-ci-view/app.js", "/pr-ci-view/data"}:
+            self._request_route = "/pr-ci-view"
+            if parsed.path == "/pr-ci-view/data":
+                self._serve_pr_ci_view(parse_qs(parsed.query))
+            else:
+                name, content_type = (
+                    ("pr_ci_view.html", "text/html; charset=utf-8")
+                    if parsed.path == "/pr-ci-view"
+                    else ("pr_ci_view.js", "text/javascript; charset=utf-8")
+                )
+                self._send(
+                    200,
+                    content_type,
+                    Path(__file__).with_name(name).read_bytes(),
+                    cache_control="public, max-age=60",
+                )
+            return
         if parsed.path == "/rerun-failed":
             self._request_route = "/rerun-failed"
             self._send(
@@ -8396,10 +8414,12 @@ class MetricsHandler(BaseHTTPRequestHandler):
             self._send(
                 200,
                 "text/html; charset=utf-8",
-                ("<!doctype html><title>Signed in</title>"
-                 "<p>Signed in. You can return to the dashboard.</p>"
-                 "<script>localStorage.setItem('tci-pr-auth-complete', String(Date.now()));"
-                 "window.close()</script>").encode(),
+                (
+                    "<!doctype html><title>Signed in</title>"
+                    "<p>Signed in. You can return to the dashboard.</p>"
+                    "<script>localStorage.setItem('tci-pr-auth-complete', String(Date.now()));"
+                    "window.close()</script>"
+                ).encode(),
                 cache_control="no-store",
             )
             return
@@ -8751,6 +8771,131 @@ class MetricsHandler(BaseHTTPRequestHandler):
         return rerun_failed.snapshot(
             pr, query=query, api=api, get_rows=gather_run_test_rows
         )
+
+    def _serve_pr_ci_view(self, params: dict[str, list[str]]) -> None:
+        pr = (params.get("pr") or [""])[0].strip()
+        if not re.fullmatch(r"[1-9][0-9]*", pr):
+            self._reply_json(400, {"error": "Invalid pull request"})
+            return
+        try:
+            snapshot = self._rerun_snapshot(pr, _rerun_github_api)
+            comments: list[dict] = []
+            for page in range(1, 11):
+                batch = _rerun_github_api(
+                    f"issues/{pr}/comments?per_page=100&page={page}"
+                )
+                if not isinstance(batch, list):
+                    break
+                comments.extend(item for item in batch if isinstance(item, dict))
+                if len(batch) < 100:
+                    break
+
+            def artifact(url: str) -> object:
+                return _http_get_json(url, timeout=12, upstream="huggingface")
+
+            def jobs_for(run_id: str) -> tuple[list[dict], list[str]]:
+                jobs: list[dict] = []
+                notes = []
+                for page in range(1, 6):
+                    payload = _rerun_github_api(
+                        f"actions/runs/{run_id.split(':', 1)[0]}/jobs?per_page=100&page={page}"
+                    )
+                    batch = payload.get("jobs") if isinstance(payload, dict) else None
+                    if not isinstance(batch, list):
+                        notes.append("GitHub job details are unavailable.")
+                        break
+                    jobs.extend(item for item in batch if isinstance(item, dict))
+                    if len(batch) < 100:
+                        break
+                if len(jobs) >= 500:
+                    notes.append("Showing the first 500 GitHub jobs.")
+                return jobs, notes
+
+            lanes = []
+            nvidia_run = pr_ci_view.newest_run(snapshot["lanes"]["gpu"])
+            comment = (
+                pr_ci_view.matching_comment(comments, nvidia_run["run_id"])
+                if nvidia_run
+                else None
+            )
+            body = str(comment.get("body") or "") if comment else ""
+            for key, label, comparison_platform in (
+                ("cpu", "CPU · PR CI", ""),
+                ("gpu", "Nvidia · run-slow", "nvidia"),
+            ):
+                source = snapshot["lanes"][key]
+                run = pr_ci_view.newest_run(source)
+                comparison_data = (
+                    pr_ci_view.comparison(body, comparison_platform, artifact)
+                    if comparison_platform and run
+                    else None
+                )
+                rows = gather_run_test_rows(run["run_id"]) if run else []
+                raw_jobs, notes = jobs_for(run["run_id"]) if run else ([], [])
+                lanes.append(
+                    {
+                        "id": key,
+                        "label": label,
+                        "run": run,
+                        "jobs": pr_ci_view.summarize_jobs(raw_jobs, rows, key),
+                        "failures": pr_ci_view.failures(rows, comparison_data),
+                        "comparison": comparison_data,
+                        "notes": source.get("notes", []) + notes,
+                    }
+                )
+
+            amd_comment = (
+                comment
+                if pr_ci_view.section(body, "amd")
+                else pr_ci_view.latest_platform_comment(comments, "amd")
+            )
+            amd_body = str(amd_comment.get("body") or "") if amd_comment else ""
+            amd_comparison = (
+                pr_ci_view.comparison(amd_body, "amd", artifact) if amd_body else None
+            )
+            amd_id = amd_comparison["run_id"] if amd_comparison else ""
+            if amd_id:
+                raw_run = _rerun_github_api(f"actions/runs/{amd_id}")
+                path = (
+                    str(raw_run.get("path") or "").split("@", 1)[0]
+                    if isinstance(raw_run, dict)
+                    else ""
+                )
+                if (
+                    path == ".github/workflows/self-comment-ci-amd.yml"
+                    and raw_run.get("event") == "issue_comment"
+                ):
+                    raw_jobs, notes = jobs_for(amd_id)
+                    amd_run = rerun_failed._run_summary(raw_run, amd_id)
+                    attributed = [
+                        {
+                            "nodeid": item["nodeid"],
+                            "hardware": "amd-2gpu"
+                            if item["hardware"] == "multi-gpu"
+                            else "amd-1gpu",
+                            "job": "run_models_gpu",
+                            "trace_id": "",
+                            "specific": True,
+                        }
+                        for item in amd_comparison["specific"]
+                    ]
+                    lanes.append(
+                        {
+                            "id": "amd",
+                            "label": "AMD · run-slow",
+                            "run": amd_run,
+                            "jobs": pr_ci_view.summarize_jobs(raw_jobs, [], "amd"),
+                            "failures": attributed,
+                            "comparison": amd_comparison,
+                            "notes": notes
+                            + [
+                                "AMD failures come from the run-slow comparison report; full test telemetry is not available."
+                            ],
+                        }
+                    )
+            self._reply_json(200, {"pr": pr, "lanes": lanes})
+        except Exception as error:
+            self._reply_json(*_rerun_source_error(error))
 
     def _serve_rerun_failed_data(self, params: dict[str, list[str]]) -> None:
         pr = (params.get("pr") or [""])[0].strip()

@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Latest PR CI</title>
+<style>
+:root{color-scheme:dark;--bg:#181b1f;--line:#33383f;--text:#d8d9da;--muted:#9fa3a9;--link:#6ab0ff;--green:#73bf69;--red:#f2495c;--amber:#f2cc60}
+*{box-sizing:border-box}html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font:12px/1.4 Inter,system-ui,sans-serif}
+body{display:flex;flex-direction:column;min-height:0}a{color:var(--link);text-decoration:none}a:hover{text-decoration:underline}
+.runs{display:flex;gap:12px;align-items:center;flex-wrap:wrap;padding:8px 12px;border-bottom:1px solid var(--line);min-height:42px}
+.run{display:inline-flex;gap:6px;align-items:center;min-width:0}.run strong{font-size:11px}.run small{color:var(--muted)}
+.run .good{color:var(--green)}.run .bad{color:var(--red)}.run .busy{color:var(--amber)}
+.layout{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);flex:1;min-height:0}
+section{display:flex;flex-direction:column;min-width:0;min-height:0}section+section{border-left:1px solid var(--line)}
+.head{display:flex;align-items:center;gap:12px;flex-wrap:wrap;min-height:39px;padding:7px 12px;border-bottom:1px solid var(--line)}
+h2{margin:0;font-size:13px}.filter{display:inline-flex;align-items:center;gap:5px;color:var(--muted);cursor:pointer}.filter input{accent-color:#6ab0ff;margin:0}
+.scroll{overflow:auto;min-height:0;flex:1}.notice{padding:8px 12px;color:var(--muted);border-bottom:1px solid var(--line)}
+.comparison{padding:8px 12px;border-bottom:1px solid var(--line)}.comparison strong{color:var(--green)}.comparison.pending strong{color:var(--amber)}.comparison.bad strong{color:var(--red)}
+.comparison .meta{display:flex;gap:10px;flex-wrap:wrap;margin-top:4px;color:var(--muted)}
+.failure{padding:7px 12px;border-bottom:1px solid var(--line);overflow-wrap:anywhere}.failure:hover,tbody tr:hover{background:#252a31}
+.failure .title{display:block;font:11px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace}.failure .meta{display:flex;gap:7px;flex-wrap:wrap;color:var(--muted);margin-top:2px}
+.specific{color:var(--green)}.shared{color:var(--muted)}.unknown{color:var(--amber)}
+table{width:100%;border-collapse:collapse;table-layout:fixed;min-width:610px}th,td{padding:6px 8px;border-bottom:1px solid var(--line);text-align:left;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+th{position:sticky;top:0;background:var(--bg);color:var(--muted);font-weight:600;z-index:1}
+.status-success{color:var(--green)}.status-failure,.status-timed_out,.status-startup_failure{color:var(--red)}.status-in_progress,.status-queued,.status-waiting{color:var(--amber)}.status-skipped,.status-cancelled{color:var(--muted)}
+@media(max-width:800px){.layout{display:flex;flex-direction:column;overflow:auto}.layout section{min-height:300px}.layout section+section{border-left:0;border-top:1px solid var(--line)}}
+</style>
+</head>
+<body>
+<div id="runs" class="runs" aria-live="polite">Loading CPU and GPU runs…</div>
+<div class="layout">
+  <section aria-label="Failing tests">
+    <div class="head"><h2>Failing Tests (latest CPU + GPU)</h2><label class="filter"><input id="specific" type="checkbox">Only PR-specific run-slow failures</label></div>
+    <div id="failures" class="scroll" aria-live="polite"></div>
+  </section>
+  <section aria-label="Latest run jobs">
+    <div class="head"><h2>Latest Run Jobs (CPU + GPU)</h2></div>
+    <div class="scroll"><table><colgroup><col style="width:84px"><col><col style="width:86px"><col style="width:78px"><col style="width:48px"><col style="width:48px"></colgroup><thead><tr><th>Lane</th><th>Job</th><th>Hardware</th><th>Status</th><th>Pass</th><th>Fail</th></tr></thead><tbody id="jobs"></tbody></table><div id="jobs-empty" class="notice" hidden></div></div>
+  </section>
+</div>
+<script src="/pr-ci-view/app.js"></script>
+</body>
+</html>

@@ -152,6 +152,13 @@ spec:
                 name: trace-exporter
                 port:
                   number: 8000
+          - path: /pr-ci-view
+            pathType: Prefix
+            backend:
+              service:
+                name: trace-exporter
+                port:
+                  number: 8000
           - path: /patch-view
             pathType: Prefix
             backend:
