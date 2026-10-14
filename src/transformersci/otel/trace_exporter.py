@@ -8391,6 +8391,18 @@ class MetricsHandler(BaseHTTPRequestHandler):
                 cache_control=_public_cache_control_header(),
             )
             return
+        if parsed.path == "/pr-table/auth-complete":
+            self._request_route = "/pr-table"
+            self._send(
+                200,
+                "text/html; charset=utf-8",
+                ("<!doctype html><title>Signed in</title>"
+                 "<p>Signed in. You can return to the dashboard.</p>"
+                 "<script>localStorage.setItem('tci-pr-auth-complete', String(Date.now()));"
+                 "window.close()</script>").encode(),
+                cache_control="no-store",
+            )
+            return
         if parsed.path in {"/pr-table", "/pr-table/app.js", "/pr-table/queries"}:
             self._request_route = "/pr-table"
             name, content_type = {

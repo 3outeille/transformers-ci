@@ -16,6 +16,7 @@
   const categories = new Map();
   let sequence = 0;
   let active = null;
+  let signInPending = false;
 
   try {
     const body = parent.document.body;
@@ -36,6 +37,23 @@
     empty.textContent = value;
     message(value, true);
   }
+  function signInPrompt() {
+    message('Sign in to use My Stuff: ');
+    const link = document.createElement('a');
+    link.href = '/login/github?redirectTo=' + encodeURIComponent('/pr-table/auth-complete');
+    link.target = '_blank';
+    link.rel = 'noopener';
+    link.textContent = 'Sign in with GitHub';
+    status.append(link);
+  }
+  function signIn() {
+    mine = false;
+    save('tci-my-stuff', false);
+    signInPending = true;
+    switches();
+    signInPrompt();
+    refresh();
+  }
   async function json(response) {
     const data = await response.json();
     if (!response.ok) throw new Error(data.error || `Request failed (${response.status})`);
@@ -45,7 +63,7 @@
     if (!mine) return null;
     if (minePrs && Date.now() < mineUntil) return minePrs;
     const response = await fetch('/pr-search/mine', {credentials: 'same-origin', signal});
-    if (response.status === 401) throw new Error('Sign in to see your PRs');
+    if (response.status === 401) throw new Error('SignInRequired');
     const data = await json(response);
     if (!Array.isArray(data.prs)) throw new Error('Could not load your PR activity');
     minePrs = data.prs.filter(pr => typeof pr === 'string' && /^[1-9][0-9]*$/.test(pr));
@@ -194,13 +212,15 @@
       const top = await query({Top: topExpression(prs)}, controller.signal);
       const ordered = series(top.Top).sort((a, b) => b.value - a.value).map(item => item.labels.pr)
         .filter(pr => /^[1-9][0-9]*$/.test(pr)).slice(0, 10);
-      if (!ordered.length) { render({}, []); message(''); return; }
+      if (!ordered.length) { render({}, []); if (signInPending) signInPrompt(); else message(''); return; }
       const details = await query(targets(ordered), controller.signal);
       if (current !== sequence) return;
       render(details, ordered);
-      message('');
+      if (signInPending) signInPrompt();
+      else message('');
     } catch (error) {
       if (error.name === 'AbortError' || current !== sequence) return;
+      if (error.message === 'SignInRequired') { signIn(); return; }
       fail(error.message || 'Could not load PRs');
     } finally {
       if (current === sequence) active = null;
@@ -214,15 +234,14 @@
       try {
         const response = await fetch('/pr-search/mine', {credentials: 'same-origin'});
         if (response.status === 401) {
-          const target = parent.location.pathname + parent.location.search + parent.location.hash;
-          parent.location.assign('/login/github?redirectTo=' + encodeURIComponent(target));
+          signIn();
           return;
         }
         const data = await json(response);
         minePrs = data.prs.filter(pr => typeof pr === 'string' && /^[1-9][0-9]*$/.test(pr));
         mineUntil = Date.now() + 300000;
       } catch (error) { fail(error.message || 'Could not load your PR activity'); return; }
-    } else { mine = false; save('tci-my-stuff', false); }
+    } else { mine = false; save('tci-my-stuff', false); signInPending = false; }
     switches();
     refresh();
   });
@@ -233,6 +252,14 @@
     refresh();
   });
   switches();
+  window.addEventListener('storage', event => {
+    if (event.key !== 'tci-pr-auth-complete' || !signInPending) return;
+    signInPending = false;
+    mine = true;
+    save('tci-my-stuff', true);
+    switches();
+    refresh();
+  });
   refresh();
   setInterval(refresh, 10000);
 })();

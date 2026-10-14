@@ -2952,6 +2952,9 @@ def test_overview_pr_table_assets_are_served() -> None:
         with urlopen(f"{base}/pr-table/app.js", timeout=5) as response:
             script = response.read().decode()
             assert response.headers["Content-Type"].startswith("text/javascript")
+        with urlopen(f"{base}/pr-table/auth-complete", timeout=5) as response:
+            auth_page = response.read().decode()
+            assert response.headers["Cache-Control"] == "no-store"
         with urlopen(f"{base}/pr-table/queries", timeout=5) as response:
             queries = json.load(response)
             assert response.headers["Content-Type"] == "application/json"
@@ -2960,7 +2963,9 @@ def test_overview_pr_table_assets_are_served() -> None:
         server.server_close()
 
     assert 'id="mine"' in page and 'id="open"' in page
-    assert "parent.location.assign('/login/github?redirectTo='" in script
+    assert "parent.location.assign('/login/github?redirectTo='" not in script
+    assert "Sign in with GitHub" in script
+    assert "tci-pr-auth-complete" in auth_page
     assert "unless on (pr)" in script
     assert set(queries["targets"]) == {
         "Activity", "Title", "Category", "Runs", "Failures", "Rate", "Age", "State", "Active"
