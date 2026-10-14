@@ -144,6 +144,12 @@
     if (value < 1) return '<1%';
     return `${Math.round(value)}%`;
   }
+  function rateStyle(value) {
+    if (!Number.isFinite(value)) return '';
+    if (value >= 10) return 'rate-high';
+    if (value >= 1) return 'rate-medium';
+    return value > 0 ? 'rate-low' : 'rate-zero';
+  }
   function categoryStyle(value) {
     return {'New model': 'new-model', Bugfix: 'bugfix', Feature: 'feature', 'CI/infra': 'ci',
       Docs: 'docs', Performance: 'performance', Refactor: 'refactor', Other: 'other'}[value] || '';
@@ -195,7 +201,8 @@
       const category = cell('');
       paintCategory(category, row.Category);
       tr.append(number, cell(row.Title), category, cell(age(row.Age)),
-        cell(relative(row.Activity / 1000)), cell(row.Runs), cell(row.Failures), cell(rate(row.Rate)));
+        cell(relative(row.Activity / 1000)), cell(row.Runs), cell(row.Failures),
+        cell(rate(row.Rate), rateStyle(row.Rate)));
       const state = row.State === 1 ? 'open' : row.State === 2 ? 'merged' : row.State === 0 ? 'closed' : '';
       tr.append(cell(state, state));
       fragment.append(tr);
