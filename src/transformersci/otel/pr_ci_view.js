@@ -69,6 +69,7 @@
       meta.append(part);
     }
     if (comparison.run_id && lane.run) meta.append(link(runLink(lane.run), 'Workflow and report'));
+    if (comparison.report_url) meta.append(link(comparison.report_url, 'Full comparison'));
     card.append(meta);
     return card;
   }
@@ -202,10 +203,12 @@
     loading = true; progress.hidden = false;
     try {
       const response = await fetch(`/pr-ci-view/data?pr=${encodeURIComponent(pr)}`, {credentials: 'same-origin', cache: 'no-store'});
+      if (!response.ok || !response.headers.get('content-type')?.includes('application/json')) {
+        throw new Error(`CI results are temporarily unavailable (HTTP ${response.status}). Retrying shortly…`);
+      }
       const data = await response.json();
-      if (!response.ok) throw new Error(data.error || data.detail || 'Could not load PR CI');
       snapshot = data; render();
-    } catch (error) { runs.textContent = error.message || 'Could not load PR CI'; }
+    } catch (error) { runs.textContent = error.message || 'CI results are temporarily unavailable. Retrying shortly…'; }
     finally { loading = false; progress.hidden = true; }
   }
   onlySpecific.addEventListener('change', () => {

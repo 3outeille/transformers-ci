@@ -8859,9 +8859,6 @@ class MetricsHandler(BaseHTTPRequestHandler):
                 ):
                     break
 
-            def artifact(url: str) -> object:
-                return _http_get_json(url, timeout=12, upstream="huggingface")
-
             def jobs_for(run_id: str) -> tuple[list[dict], list[str]]:
                 jobs: list[dict] = []
                 notes = []
@@ -8897,21 +8894,17 @@ class MetricsHandler(BaseHTTPRequestHandler):
             )
             amd_body = str(amd_comment.get("body") or "") if amd_comment else ""
             runs = {key: pr_ci_view.newest_run(sources[key]) for key in ("cpu", "gpu")}
-            with ThreadPoolExecutor(max_workers=4) as pool:
+            with ThreadPoolExecutor(max_workers=2) as pool:
                 job_futures = {
                     key: pool.submit(jobs_for, run["run_id"])
                     for key, run in runs.items()
                     if run
                 }
-                gpu_comparison = (
-                    pool.submit(pr_ci_view.comparison, body, "nvidia", artifact)
-                    if runs["gpu"]
-                    else None
+                nvidia_comparison = (
+                    pr_ci_view.comparison(body, "nvidia") if runs["gpu"] else None
                 )
-                amd_future = (
-                    pool.submit(pr_ci_view.comparison, amd_body, "amd", artifact)
-                    if amd_body
-                    else None
+                amd_comparison = (
+                    pr_ci_view.comparison(amd_body, "amd") if amd_body else None
                 )
                 rows_by_key = {
                     key: gather_run_test_rows(run["run_id"]) if run else []
@@ -8920,8 +8913,6 @@ class MetricsHandler(BaseHTTPRequestHandler):
                 jobs_by_key = {
                     key: future.result() for key, future in job_futures.items()
                 }
-                nvidia_comparison = gpu_comparison.result() if gpu_comparison else None
-                amd_comparison = amd_future.result() if amd_future else None
 
             lanes = []
             for key, label, comparison_platform in (
@@ -8974,7 +8965,9 @@ class MetricsHandler(BaseHTTPRequestHandler):
                             "nodeid": item["nodeid"],
                             "hardware": "amd-2gpu"
                             if item["hardware"] == "multi-gpu"
-                            else "amd-1gpu",
+                            else "amd-1gpu"
+                            if item["hardware"] == "single-gpu"
+                            else "amd-gpu",
                             "job": "run_models_gpu",
                             "trace_id": "",
                             "specific": True,

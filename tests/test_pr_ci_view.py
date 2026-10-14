@@ -57,7 +57,7 @@ def test_source_lookup_selects_latest_valid_run_per_lane(monkeypatch) -> None:
     assert sources["gpu"]["source_run"]["run_id"] == "102:1"
 
 
-def test_run_slow_comparison_matches_the_run_and_artifact() -> None:
+def test_run_slow_comparison_uses_the_comment_report() -> None:
     body = """## CI (Nvidia + AMD)
 <!-- nvidia-section-start -->
 ### Nvidia CI
@@ -66,6 +66,8 @@ def test_run_slow_comparison_matches_the_run_and_artifact() -> None:
 | PR | [b](https://github.com/huggingface/transformers/commit/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb) |
 | main | [c](https://github.com/huggingface/transformers/commit/cccccccccccccccccccccccccccccccccccccccc) |
 ❌ **[1 new failed tests from this PR](https://huggingface.co/datasets/example/report/new_failures_with_bad_commit.json)**
+- [vit](https://github.com/huggingface/transformers/actions/runs/123/job/1):
+    tests/models/vit/test_vit.py::test_regression (✅ ⟹ ❌)
 <!-- nvidia-section-end -->
 <!-- amd-section-start -->
 ### AMD CI
@@ -77,35 +79,15 @@ def test_run_slow_comparison_matches_the_run_and_artifact() -> None:
     assert pr_ci_view.matching_comment([comment], "999:1") is None
     assert pr_ci_view.latest_platform_comment([comment], "amd") == comment
 
-    def artifact(url: str) -> object:
-        assert (
-            url
-            == "https://huggingface.co/datasets/example/report/new_failures_with_bad_commit.json"
-        )
-        return {
-            "vit": {
-                "single-gpu": [
-                    {
-                        "test": "tests/models/vit/test_vit.py::test_regression",
-                        "bad_commit": "a",
-                        "status": "new",
-                    },
-                    {
-                        "test": "tests/models/vit/test_vit.py::test_existing",
-                        "bad_commit": None,
-                    },
-                ]
-            }
-        }
-
-    nvidia = pr_ci_view.comparison(body, "nvidia", artifact)
+    nvidia = pr_ci_view.comparison(body, "nvidia")
     assert nvidia["state"] == "complete"
     assert nvidia["run_id"] == "123"
     assert nvidia["commits"]["main"] == "c" * 40
+    assert nvidia["report_url"].endswith("/new_failures_with_bad_commit.json")
     assert [item["nodeid"] for item in nvidia["specific"]] == [
         "tests/models/vit/test_vit.py::test_regression"
     ]
-    assert pr_ci_view.comparison(body, "amd", artifact)["specific"] == []
+    assert pr_ci_view.comparison(body, "amd")["specific"] == []
 
     rows = [
         {
@@ -129,7 +111,7 @@ def test_run_slow_comparison_matches_the_run_and_artifact() -> None:
     ]
     assert [item["specific"] for item in pr_ci_view.failures(rows, nvidia)] == [
         True,
-        False,
+        True,
         False,
     ]
 

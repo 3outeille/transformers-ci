@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Callable
-from urllib.parse import urlparse
 
 RUN_LINK = re.compile(
     r"https://github\.com/huggingface/transformers/actions/runs/(\d+)"
@@ -51,16 +49,14 @@ def latest_platform_comment(comments: list[dict], platform: str) -> dict | None:
     return None
 
 
-def comparison(
-    body: str,
-    platform: str,
-    fetch_artifact: Callable[[str], object],
-) -> dict:
+def comparison(body: str, platform: str) -> dict:
     content = section(body, platform)
     runs = RUN_LINK.findall(content)
+    artifact = ARTIFACT_LINK.search(content)
     result = {
         "run_id": runs[0] if runs else "",
         "commits": {kind.lower(): sha for kind, sha in COMMIT.findall(content)},
+        "report_url": artifact.group(0) if artifact else "",
         "specific": [],
         "state": "pending",
     }
@@ -74,37 +70,6 @@ def comparison(
         return result
     if "new failed tests from this PR" not in content:
         return result
-    artifact = ARTIFACT_LINK.search(content)
-    if artifact:
-        url = artifact.group(0)
-        parsed = urlparse(url)
-        if parsed.netloc == "huggingface.co" and parsed.path.startswith("/datasets/"):
-            try:
-                payload = fetch_artifact(url)
-                for model in payload.values() if isinstance(payload, dict) else ():
-                    for hardware, failures in (
-                        model.items() if isinstance(model, dict) else ()
-                    ):
-                        for failure in failures if isinstance(failures, list) else ():
-                            if (
-                                not isinstance(failure, dict)
-                                or failure.get("bad_commit") is None
-                            ):
-                                continue
-                            nodeid = failure.get("test")
-                            if isinstance(nodeid, str) and nodeid:
-                                result["specific"].append(
-                                    {
-                                        "nodeid": nodeid,
-                                        "hardware": str(hardware),
-                                        "status": str(failure.get("status") or ""),
-                                        "job_url": str(failure.get("job_link") or ""),
-                                    }
-                                )
-                result["state"] = "complete"
-                return result
-            except Exception:
-                pass
     result["specific"] = [
         {"nodeid": nodeid, "hardware": "", "status": "", "job_url": ""}
         for nodeid in dict.fromkeys(TEST_LINE.findall(content))
