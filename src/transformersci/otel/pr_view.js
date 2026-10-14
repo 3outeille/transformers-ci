@@ -72,10 +72,10 @@ function installPrView() {
   }
   async function checkActivity(branch = doc.querySelector('.tci-branch[data-pr-view]'), force = false) {
     if (!branch || doc.hidden) return;
-    let pr, repository;
-    try { pr = decodeURIComponent(branch.dataset.pr || ''); repository = decodeURIComponent(branch.dataset.repository || ''); } catch (_) { return; }
-    if (!/^[1-9][0-9]*$/.test(pr) || !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repository)) { markActivity(branch, false); return; }
-    const key = repository + '#' + pr;
+    let pr;
+    try { pr = decodeURIComponent(branch.dataset.pr || ''); } catch (_) { return; }
+    if (!/^[1-9][0-9]*$/.test(pr)) { markActivity(branch, false); return; }
+    const key = pr;
     if (key !== activityKey) {
       if (activityRequest) activityRequest.abort();
       activityRequest = null; activityKey = key; activityTime = 0; activityRunning = false;
@@ -86,16 +86,15 @@ function installPrView() {
     const controller = new host.AbortController(); activityRequest = controller;
     const timeout = host.setTimeout(() => controller.abort(), 10000);
     try {
-      // Active-job series have no repository label; scope them through run identity.
-      const response = await host.fetch('/api/ds/query', {method:'POST', credentials:'same-origin', signal:controller.signal, headers:{'Content-Type':'application/json'}, body:JSON.stringify({from:'now-5m', to:'now', queries:[{refId:'PRTestsActive', datasource:{type:'prometheus',uid:'prometheus'}, expr:'max(pytest_run_job_active{pr=' + JSON.stringify(pr) + '} and on(pr,run_id) ci_github_run_info{pr=' + JSON.stringify(pr) + ',repository=' + JSON.stringify(repository) + '}) or vector(0)', instant:true, range:false, maxDataPoints:1, intervalMs:30000}]})});
+      const response = await host.fetch('/pr-ci-view/data?pr=' + encodeURIComponent(pr), {credentials:'same-origin',signal:controller.signal});
       if (!response.ok) throw Error('Live status unavailable');
-      const result = (await response.json()).results?.PRTestsActive;
-      if (!result || result.error) throw Error('Live status unavailable');
-      const running = (result.frames || []).some(frame => frame.schema.fields.some((field, index) => field.type === 'number' && Number(frame.data.values[index]?.at(-1)) > 0));
+      const result = await response.json();
+      if (!Array.isArray(result.lanes)) throw Error('Live status unavailable');
+      const active = new Set(['in_progress','queued','waiting','requested','pending']);
+      const running = result.lanes.some(lane => active.has(lane.run?.status) || (lane.jobs || []).some(job => active.has(job.status)));
       if (activityRequest === controller) { activityRunning = running; checkActivity(); }
-    } catch (_) {
-      if (activityRequest === controller) { activityRunning = false; checkActivity(); }
-    } finally {
+    } catch (_) { /* Keep the last known status during a transient refresh error. */ }
+    finally {
       host.clearTimeout(timeout);
       if (activityRequest === controller) activityRequest = null;
     }
