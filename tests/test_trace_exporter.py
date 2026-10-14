@@ -2936,6 +2936,37 @@ def test_pr_search_page_is_served() -> None:
     assert "__PR_URL__" not in page
 
 
+def test_overview_pr_table_assets_are_served() -> None:
+    import threading
+    from http.server import ThreadingHTTPServer
+    from urllib.request import urlopen
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), trace_exporter.MetricsHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        base = f"http://127.0.0.1:{server.server_address[1]}"
+        with urlopen(f"{base}/pr-table", timeout=5) as response:
+            page = response.read().decode()
+            assert response.headers["Content-Type"].startswith("text/html")
+        with urlopen(f"{base}/pr-table/app.js", timeout=5) as response:
+            script = response.read().decode()
+            assert response.headers["Content-Type"].startswith("text/javascript")
+        with urlopen(f"{base}/pr-table/queries", timeout=5) as response:
+            queries = json.load(response)
+            assert response.headers["Content-Type"] == "application/json"
+    finally:
+        server.shutdown()
+        server.server_close()
+
+    assert 'id="mine"' in page and 'id="open"' in page
+    assert "parent.location.assign('/login/github?redirectTo='" in script
+    assert "unless on (pr)" in script
+    assert set(queries["targets"]) == {
+        "Activity", "Title", "Category", "Runs", "Failures", "Rate", "Age", "State", "Active"
+    }
+
+
 def test_pr_labels_endpoint_uses_current_github_metadata(monkeypatch) -> None:
     import threading
     from http.server import ThreadingHTTPServer

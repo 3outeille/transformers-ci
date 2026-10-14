@@ -8391,6 +8391,20 @@ class MetricsHandler(BaseHTTPRequestHandler):
                 cache_control=_public_cache_control_header(),
             )
             return
+        if parsed.path in {"/pr-table", "/pr-table/app.js", "/pr-table/queries"}:
+            self._request_route = "/pr-table"
+            name, content_type = {
+                "/pr-table": ("pr_table.html", "text/html; charset=utf-8"),
+                "/pr-table/app.js": ("pr_table.js", "text/javascript; charset=utf-8"),
+                "/pr-table/queries": ("pr_table_queries.json", "application/json"),
+            }[parsed.path]
+            self._send(
+                200,
+                content_type,
+                Path(__file__).with_name(name).read_bytes(),
+                cache_control="public, max-age=60",
+            )
+            return
         if parsed.path == "/page-view":
             self._request_route = "/page-view"
             dashboard = (parse_qs(parsed.query).get("d") or [""])[0]
