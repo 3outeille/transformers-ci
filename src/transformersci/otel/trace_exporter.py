@@ -8772,13 +8772,45 @@ class MetricsHandler(BaseHTTPRequestHandler):
             pr, query=query, api=api, get_rows=gather_run_test_rows
         )
 
+    def _pr_ci_sources(self, pr: str) -> dict:
+        # The rerun picker also loads 90 days of commit metadata, checks
+        # queued workflows, and enumerates every failed test. This view
+        # only needs the newest source run in each lane.
+        base_url = prometheus_base_url()
+        if not base_url:
+            raise ValueError("Prometheus unavailable")
+        expr = (
+            f'last_over_time(pytest_run_start_time_seconds{{pr="{pr}",'
+            'ci_event!~"rerun-failed-.*"}[90d])'
+        )
+        prometheus = _http_get_json(
+            f"{base_url}/api/v1/query?{urlencode({'query': expr})}",
+            upstream="prometheus",
+        )
+        if not isinstance(prometheus, dict) or prometheus.get("status") != "success":
+            raise ValueError("Prometheus query failed")
+        results = prometheus.get("data", {}).get("result", [])
+        if not isinstance(results, list):
+            raise ValueError("Prometheus response incomplete")
+        candidates = rerun_failed.source_candidates(pr, lambda _expr: results)
+        sources = {}
+        for key in ("cpu", "gpu"):
+            source_run = None
+            for run_id in candidates[key][0]:
+                raw = _rerun_github_api(f"actions/runs/{run_id.split(':', 1)[0]}")
+                if rerun_failed._source_run(raw, key):
+                    source_run = rerun_failed._run_summary(raw, run_id)
+                    break
+            sources[key] = {"source_run": source_run, "active_runs": [], "notes": []}
+        return sources
+
     def _serve_pr_ci_view(self, params: dict[str, list[str]]) -> None:
         pr = (params.get("pr") or [""])[0].strip()
         if not re.fullmatch(r"[1-9][0-9]*", pr):
             self._reply_json(400, {"error": "Invalid pull request"})
             return
         try:
-            snapshot = self._rerun_snapshot(pr, _rerun_github_api)
+            sources = self._pr_ci_sources(pr)
             comments: list[dict] = []
             for page in range(1, 11):
                 batch = _rerun_github_api(
@@ -8812,7 +8844,7 @@ class MetricsHandler(BaseHTTPRequestHandler):
                 return jobs, notes
 
             lanes = []
-            nvidia_run = pr_ci_view.newest_run(snapshot["lanes"]["gpu"])
+            nvidia_run = pr_ci_view.newest_run(sources["gpu"])
             comment = (
                 pr_ci_view.matching_comment(comments, nvidia_run["run_id"])
                 if nvidia_run
@@ -8823,7 +8855,7 @@ class MetricsHandler(BaseHTTPRequestHandler):
                 ("cpu", "CPU · PR CI", ""),
                 ("gpu", "Nvidia · run-slow", "nvidia"),
             ):
-                source = snapshot["lanes"][key]
+                source = sources[key]
                 run = pr_ci_view.newest_run(source)
                 comparison_data = (
                     pr_ci_view.comparison(body, comparison_platform, artifact)

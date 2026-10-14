@@ -8,6 +8,55 @@ from urllib.request import urlopen
 from transformersci.otel import pr_ci_view, trace_exporter
 
 
+def test_source_lookup_selects_latest_valid_run_per_lane(monkeypatch) -> None:
+    monkeypatch.setattr(
+        trace_exporter, "prometheus_base_url", lambda: "http://prometheus"
+    )
+    monkeypatch.setattr(
+        trace_exporter,
+        "_http_get_json",
+        lambda *args, **kwargs: {
+            "status": "success",
+            "data": {
+                "result": [
+                    {
+                        "metric": {"run_id": "101:1", "ci_event": "none"},
+                        "value": [0, "100"],
+                    },
+                    {
+                        "metric": {"run_id": "102:1", "ci_event": "pr-comment"},
+                        "value": [0, "110"],
+                    },
+                    {
+                        "metric": {"run_id": "103:1", "ci_event": "none"},
+                        "value": [0, "120"],
+                    },
+                ]
+            },
+        },
+    )
+    runs = {
+        "101": {
+            "path": ".github/workflows/pr-ci-caller.yml@main",
+            "event": "pull_request",
+        },
+        "102": {
+            "path": ".github/workflows/self-comment-ci.yml@main",
+            "event": "issue_comment",
+        },
+        "103": {
+            "path": ".github/workflows/rerun-failed-tests.yml@main",
+            "event": "workflow_dispatch",
+        },
+    }
+    monkeypatch.setattr(
+        trace_exporter, "_rerun_github_api", lambda path: runs[path.rsplit("/", 1)[1]]
+    )
+    sources = object.__new__(trace_exporter.MetricsHandler)._pr_ci_sources("49599")
+    assert sources["cpu"]["source_run"]["run_id"] == "101:1"
+    assert sources["gpu"]["source_run"]["run_id"] == "102:1"
+
+
 def test_run_slow_comparison_matches_the_run_and_artifact() -> None:
     body = """## CI (Nvidia + AMD)
 <!-- nvidia-section-start -->
@@ -100,14 +149,12 @@ def test_combined_view_endpoint_serves_both_lanes(monkeypatch) -> None:
         "conclusion": "failure",
         "created_at": "2026-10-14T11:00:00Z",
     }
-    snapshot = {
-        "lanes": {
-            "cpu": {"source_run": cpu, "active_runs": [], "notes": []},
-            "gpu": {"source_run": gpu, "active_runs": [], "notes": []},
-        }
+    sources = {
+        "cpu": {"source_run": cpu, "active_runs": [], "notes": []},
+        "gpu": {"source_run": gpu, "active_runs": [], "notes": []},
     }
     monkeypatch.setattr(
-        trace_exporter.MetricsHandler, "_rerun_snapshot", lambda self, pr, api: snapshot
+        trace_exporter.MetricsHandler, "_pr_ci_sources", lambda self, pr: sources
     )
     monkeypatch.setattr(
         trace_exporter,
