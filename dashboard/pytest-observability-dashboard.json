@@ -88,7 +88,7 @@
           "showLineNumbers": false,
           "showMiniMap": false
         },
-        "content": "<iframe title=\"Last 10 PRs\" src=\"/pr-table\" style=\"display:block;width:100%;height:100%;border:0;border-radius:4px\"></iframe>",
+        "content": "<iframe title=\"Last 20 PRs\" src=\"/pr-table\" style=\"display:block;width:100%;height:100%;border:0;border-radius:4px\"></iframe>",
         "mode": "html"
       },
       "title": "",

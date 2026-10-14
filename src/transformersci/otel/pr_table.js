@@ -103,7 +103,7 @@
   }
   function topExpression(prs) {
     const original = queryConfig.top;
-    const prefix = 'query_result(topk(10, ';
+    const prefix = 'query_result(topk(20, ';
     if (!original.startsWith(prefix) || !original.endsWith('))')) throw new Error('Invalid PR query configuration');
     const base = original.slice(prefix.length, -2);
     const scope = prs ? (prs.length ? prs.join('|') : '0') : '[0-9]+';
@@ -111,7 +111,7 @@
     const visible = hideClosed
       ? `(${activity}) unless on (pr) (max by (pr) (last_over_time(pytest_pr_state[${days}d])) != 1)`
       : activity;
-    return `topk(10, (${visible}) > (time() - ${days * 86400}))`;
+    return `topk(20, (${visible}) > (time() - ${days * 86400}))`;
   }
   function targets(prs) {
     const scope = prs.join('|');
@@ -216,7 +216,7 @@
       const prs = await candidates(controller.signal);
       const top = await query({Top: topExpression(prs)}, controller.signal);
       const ordered = series(top.Top).sort((a, b) => b.value - a.value).map(item => item.labels.pr)
-        .filter(pr => /^[1-9][0-9]*$/.test(pr)).slice(0, 10);
+        .filter(pr => /^[1-9][0-9]*$/.test(pr)).slice(0, 20);
       if (!ordered.length) { render({}, []); if (signInPending) signInPrompt(); else message(''); return; }
       const details = await query(targets(ordered), controller.signal);
       if (current !== sequence) return;
