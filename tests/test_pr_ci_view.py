@@ -55,6 +55,22 @@ def test_running_shard_keeps_job_active_after_another_shard_fails() -> None:
     assert jobs[0]["status"] == "in_progress"
 
 
+def test_telemetry_jobs_use_completed_run_result_when_github_jobs_are_missing() -> None:
+    rows = [
+        {"test_job": "tests_torch", "hardware": "cpu", "status_code": "OK"},
+        {"test_job": "tests_generate", "hardware": "cpu", "status_code": "ERROR"},
+    ]
+    jobs = pr_ci_view.summarize_jobs([], rows, "cpu", "success")
+    assert {job["name"]: job["status"] for job in jobs} == {
+        "tests_generate": "failure",
+        "tests_torch": "success",
+    }
+    assert (
+        pr_ci_view.summarize_jobs([], rows[:1], "cpu", "failure")[0]["status"]
+        == "recorded"
+    )
+
+
 def test_source_lookup_includes_active_run_without_test_telemetry(monkeypatch) -> None:
     monkeypatch.setattr(
         trace_exporter, "prometheus_base_url", lambda: "http://prometheus"

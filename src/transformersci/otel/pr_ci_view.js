@@ -41,6 +41,33 @@
   };
   const live = status => ['in_progress', 'queued', 'waiting', 'requested', 'pending'].includes(status);
   const statusClass = status => ['failure', 'timed_out', 'startup_failure'].includes(status) ? 'failure' : status === 'success' ? 'success' : live(status) ? 'running' : ['skipped', 'cancelled'].includes(status) ? status : 'unknown';
+  const svgNode = tag => document.createElementNS('http://www.w3.org/2000/svg', tag);
+  function statusIcon(status) {
+    const kind = statusClass(status);
+    const label = kind === 'unknown' ? 'Job status unavailable; test results were recorded' : status.replaceAll('_', ' ');
+    const icon = svgNode('svg');
+    icon.classList.add('status-icon');
+    icon.setAttribute('viewBox', '0 0 16 16');
+    icon.setAttribute('role', 'img');
+    icon.setAttribute('aria-label', label);
+    const title = svgNode('title'); title.textContent = label; icon.append(title);
+    const circle = svgNode('circle');
+    circle.setAttribute('cx', '8'); circle.setAttribute('cy', '8'); circle.setAttribute('r', '7');
+    circle.setAttribute('fill', kind === 'success' ? '#3fb950' : kind === 'failure' ? '#f85149' : '#6e7681');
+    icon.append(circle);
+    if (kind === 'unknown') {
+      const question = svgNode('text');
+      question.setAttribute('x', '8'); question.setAttribute('y', '11.3'); question.setAttribute('text-anchor', 'middle');
+      question.setAttribute('fill', '#fff'); question.setAttribute('font-size', '10'); question.setAttribute('font-weight', '700');
+      question.textContent = '?'; icon.append(question);
+    } else {
+      const mark = svgNode('path');
+      mark.setAttribute('d', kind === 'success' ? 'M4.5 8.3l2.1 2.1 4.9-5.1' : kind === 'failure' ? 'M5.4 5.4l5.2 5.2M10.6 5.4l-5.2 5.2' : 'M4.5 8h7');
+      mark.setAttribute('fill', 'none'); mark.setAttribute('stroke', '#fff'); mark.setAttribute('stroke-width', '1.8');
+      mark.setAttribute('stroke-linecap', 'round'); mark.setAttribute('stroke-linejoin', 'round'); icon.append(mark);
+    }
+    return icon;
+  }
   const laneName = (lane, hardware) => lane.id === 'cpu' ? 'CPU' : lane.id === 'amd' ? (hardware === 'amd-2gpu' ? 'AMD xGPU' : 'AMD GPU') : (hardware === 'multi-gpu' ? 'Nvidia xGPU' : 'Nvidia GPU');
   function renderRuns() {
     runs.replaceChildren();
@@ -167,11 +194,7 @@
         status.append(node('span', 'live'));
         status.append(node('span', 'running-text', job.status === 'in_progress' ? 'running' : job.status));
       }
-      else {
-        const badge = node('span', 'state ' + statusClass(job.status), job.status === 'recorded' ? 'tests recorded' : job.status.replaceAll('_', ' '));
-        if (job.status === 'recorded') badge.title = 'Test results were recorded, but no matching GitHub job status was found.';
-        status.append(badge);
-      }
+      else status.append(statusIcon(job.status));
       tr.append(status, node('td', 'dur', job.pass ?? '—'), node('td', 'dur', job.fail ?? '—'));
       jobs.append(tr);
     }

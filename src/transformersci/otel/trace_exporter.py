@@ -8992,7 +8992,9 @@ class MetricsHandler(BaseHTTPRequestHandler):
                         "id": key,
                         "label": label,
                         "run": run,
-                        "jobs": pr_ci_view.summarize_jobs(raw_jobs, rows, key),
+                        "jobs": pr_ci_view.summarize_jobs(
+                            raw_jobs, rows, key, (run or {}).get("conclusion", "")
+                        ),
                         "failures": pr_ci_view.failures(rows, comparison_data),
                         "comparison": comparison_data,
                         "notes": source.get("notes", []) + notes,

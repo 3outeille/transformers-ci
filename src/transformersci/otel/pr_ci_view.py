@@ -105,12 +105,16 @@ def _job_identity(name: str, lane: str) -> tuple[str, str] | None:
     return match.group(1), hardware
 
 
-def summarize_jobs(raw_jobs: list[dict], rows: list[dict], lane: str) -> list[dict]:
+def summarize_jobs(
+    raw_jobs: list[dict], rows: list[dict], lane: str, run_conclusion: str = ""
+) -> list[dict]:
     jobs: dict[tuple[str, str], dict] = {}
+    github_jobs: set[tuple[str, str]] = set()
     for raw in raw_jobs:
         identity = _job_identity(str(raw.get("name") or ""), lane)
         if not identity:
             continue
+        github_jobs.add(identity)
         job, hardware = identity
         item = jobs.setdefault(
             identity,
@@ -168,6 +172,12 @@ def summarize_jobs(raw_jobs: list[dict], rows: list[dict], lane: str) -> list[di
         if status in {"OK", "ERROR"}:
             field = "fail" if status == "ERROR" else "pass"
             item[field] = (item[field] or 0) + 1
+    for identity, item in jobs.items():
+        if identity not in github_jobs:
+            if item["fail"]:
+                item["status"] = "failure"
+            elif run_conclusion == "success" and item["pass"]:
+                item["status"] = "success"
     return sorted(jobs.values(), key=lambda item: (item["hardware"], item["name"]))
 
 
