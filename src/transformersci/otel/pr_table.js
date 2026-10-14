@@ -127,7 +127,12 @@
   }
   function paintCategory(cell, value) {
     cell.className = value ? `category-cell ${categoryStyle(value)}` : '';
-    cell.textContent = value === 'New model' ? 'NEW MODEL!' : text(value);
+    if (value === 'New model') {
+      const stamp = document.createElement('span');
+      stamp.className = 'model-badge';
+      stamp.textContent = 'NEW MODEL!';
+      cell.replaceChildren(stamp);
+    } else cell.textContent = text(value);
   }
   function currentCategory(pr, cell) {
     const cached = categories.get(pr);

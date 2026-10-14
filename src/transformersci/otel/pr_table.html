@@ -6,7 +6,8 @@
 <title>Last 10 PRs</title>
 <style>
 :root{color-scheme:dark;--bg:#181b1f;--fg:#d8d9da;--muted:#9fa3a9;--line:#33383f;--hover:#252a31;--accent:#6e9fff}
-html,body{margin:0;min-height:100%;background:var(--bg);color:var(--fg);font:13px Inter,system-ui,sans-serif}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--fg);font:13px Inter,system-ui,sans-serif}
+body{display:flex;flex-direction:column}
 body.light{color-scheme:light;--bg:#fff;--fg:#24292e;--muted:#656d76;--line:#d0d7de;--hover:#f3f4f6;--accent:#1f6feb}
 header{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:10px 12px;border-bottom:1px solid var(--line)}
 h1{font-size:15px;line-height:24px;margin:0 12px 0 0}
@@ -20,7 +21,7 @@ h1{font-size:15px;line-height:24px;margin:0 12px 0 0}
 .switch[aria-checked=true] .knob{background:white;transform:translateX(10px)}
 #status{margin-left:auto;color:var(--muted);font-size:12px}
 #status.error{color:#f2495c}
-.scroll{overflow:auto;max-height:410px}
+.scroll{flex:1;min-height:0;overflow:auto}
 table{width:100%;border-collapse:collapse;table-layout:fixed;min-width:900px}
 th,td{padding:7px 8px;text-align:left;border-bottom:1px solid var(--line);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 th{position:sticky;top:0;background:var(--bg);color:var(--muted);font-weight:600;z-index:1}
@@ -28,6 +29,7 @@ tbody tr:hover{background:var(--hover)}
 td a{color:var(--accent);text-decoration:none}td a:hover{text-decoration:underline}
 .live{display:inline-block;width:12px;height:12px;border:2px solid var(--line);border-top-color:#f2cc60;border-radius:50%;animation:spin .8s linear infinite}
 .category-cell{font-size:11px;font-weight:700}
+.model-badge{display:inline-block;border:1px solid #d4a72c;border-radius:3px;padding:1px 5px;font:800 10px/1.2 system-ui,sans-serif;letter-spacing:.04em;transform:rotate(-2deg)}
 .new-model{background:#4b3714;color:#f4ce73}.bugfix{background:#d85a6b;color:#fff}.feature{background:#5d9cec;color:#fff}.ci{background:#9b7edb;color:#fff}.docs{background:#72b59a;color:#111217}.performance{background:#e2a050;color:#111217}.refactor{background:#8798b0;color:#111217}.other{background:#77808e;color:#fff}
 .open{color:#73bf69}.merged{color:#8f7ee7}.closed{color:var(--muted)}
 .empty{padding:22px 12px;color:var(--muted)}
