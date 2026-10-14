@@ -8793,16 +8793,33 @@ class MetricsHandler(BaseHTTPRequestHandler):
         if not isinstance(results, list):
             raise ValueError("Prometheus response incomplete")
         candidates = rerun_failed.source_candidates(pr, lambda _expr: results)
-        sources = {}
-        for key in ("cpu", "gpu"):
+
+        def source_for(key: str) -> dict:
             source_run = None
+            notes = []
             for run_id in candidates[key][0]:
-                raw = _rerun_github_api(f"actions/runs/{run_id.split(':', 1)[0]}")
+                try:
+                    raw = _rerun_github_api(f"actions/runs/{run_id.split(':', 1)[0]}")
+                except Exception:
+                    if source_run is None:
+                        source_run = {
+                            "run_id": run_id,
+                            "url": f"https://github.com/huggingface/transformers/actions/runs/{run_id.split(':', 1)[0]}",
+                            "status": "unknown",
+                            "conclusion": "",
+                            "created_at": "",
+                        }
+                    notes.append("GitHub run status is temporarily unavailable.")
+                    continue
                 if rerun_failed._source_run(raw, key):
                     source_run = rerun_failed._run_summary(raw, run_id)
                     break
-            sources[key] = {"source_run": source_run, "active_runs": [], "notes": []}
-        return sources
+            return {"source_run": source_run, "active_runs": [], "notes": notes}
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            cpu = pool.submit(source_for, "cpu")
+            gpu = pool.submit(source_for, "gpu")
+            return {"cpu": cpu.result(), "gpu": gpu.result()}
 
     def _serve_pr_ci_view(self, params: dict[str, list[str]]) -> None:
         pr = (params.get("pr") or [""])[0].strip()
@@ -8827,9 +8844,12 @@ class MetricsHandler(BaseHTTPRequestHandler):
             )
             comments: list[dict] = []
             for page in range(1, 4):
-                batch = _rerun_github_api(
-                    f"issues/{pr}/comments?per_page=100&sort=updated&direction=desc&since={since}&page={page}"
-                )
+                try:
+                    batch = _rerun_github_api(
+                        f"issues/{pr}/comments?per_page=100&sort=updated&direction=desc&since={since}&page={page}"
+                    )
+                except Exception:
+                    break
                 if not isinstance(batch, list):
                     break
                 comments.extend(item for item in batch if isinstance(item, dict))
@@ -8846,9 +8866,13 @@ class MetricsHandler(BaseHTTPRequestHandler):
                 jobs: list[dict] = []
                 notes = []
                 for page in range(1, 6):
-                    payload = _rerun_github_api(
-                        f"actions/runs/{run_id.split(':', 1)[0]}/jobs?per_page=100&page={page}"
-                    )
+                    try:
+                        payload = _rerun_github_api(
+                            f"actions/runs/{run_id.split(':', 1)[0]}/jobs?per_page=100&page={page}"
+                        )
+                    except Exception:
+                        notes.append("GitHub job details are temporarily unavailable.")
+                        break
                     batch = payload.get("jobs") if isinstance(payload, dict) else None
                     if not isinstance(batch, list):
                         notes.append("GitHub job details are unavailable.")
@@ -8860,26 +8884,55 @@ class MetricsHandler(BaseHTTPRequestHandler):
                     notes.append("Showing the first 500 GitHub jobs.")
                 return jobs, notes
 
-            lanes = []
             comment = (
                 pr_ci_view.matching_comment(comments, nvidia_run["run_id"])
                 if nvidia_run
                 else None
             )
             body = str(comment.get("body") or "") if comment else ""
+            amd_comment = (
+                comment
+                if pr_ci_view.section(body, "amd")
+                else pr_ci_view.latest_platform_comment(comments, "amd")
+            )
+            amd_body = str(amd_comment.get("body") or "") if amd_comment else ""
+            runs = {key: pr_ci_view.newest_run(sources[key]) for key in ("cpu", "gpu")}
+            with ThreadPoolExecutor(max_workers=4) as pool:
+                job_futures = {
+                    key: pool.submit(jobs_for, run["run_id"])
+                    for key, run in runs.items()
+                    if run
+                }
+                gpu_comparison = (
+                    pool.submit(pr_ci_view.comparison, body, "nvidia", artifact)
+                    if runs["gpu"]
+                    else None
+                )
+                amd_future = (
+                    pool.submit(pr_ci_view.comparison, amd_body, "amd", artifact)
+                    if amd_body
+                    else None
+                )
+                rows_by_key = {
+                    key: gather_run_test_rows(run["run_id"]) if run else []
+                    for key, run in runs.items()
+                }
+                jobs_by_key = {
+                    key: future.result() for key, future in job_futures.items()
+                }
+                nvidia_comparison = gpu_comparison.result() if gpu_comparison else None
+                amd_comparison = amd_future.result() if amd_future else None
+
+            lanes = []
             for key, label, comparison_platform in (
                 ("cpu", "CPU · PR CI", ""),
                 ("gpu", "Nvidia · run-slow", "nvidia"),
             ):
                 source = sources[key]
-                run = pr_ci_view.newest_run(source)
-                comparison_data = (
-                    pr_ci_view.comparison(body, comparison_platform, artifact)
-                    if comparison_platform and run
-                    else None
-                )
-                rows = gather_run_test_rows(run["run_id"]) if run else []
-                raw_jobs, notes = jobs_for(run["run_id"]) if run else ([], [])
+                run = runs[key]
+                comparison_data = nvidia_comparison if comparison_platform else None
+                rows = rows_by_key[key]
+                raw_jobs, notes = jobs_by_key.get(key, ([], []))
                 lanes.append(
                     {
                         "id": key,
@@ -8892,18 +8945,19 @@ class MetricsHandler(BaseHTTPRequestHandler):
                     }
                 )
 
-            amd_comment = (
-                comment
-                if pr_ci_view.section(body, "amd")
-                else pr_ci_view.latest_platform_comment(comments, "amd")
-            )
-            amd_body = str(amd_comment.get("body") or "") if amd_comment else ""
-            amd_comparison = (
-                pr_ci_view.comparison(amd_body, "amd", artifact) if amd_body else None
-            )
             amd_id = amd_comparison["run_id"] if amd_comparison else ""
             if amd_id:
-                raw_run = _rerun_github_api(f"actions/runs/{amd_id}")
+                amd_notes = []
+                try:
+                    raw_run = _rerun_github_api(f"actions/runs/{amd_id}")
+                except Exception:
+                    raw_run = {
+                        "path": ".github/workflows/self-comment-ci-amd.yml",
+                        "event": "issue_comment",
+                        "html_url": f"https://github.com/huggingface/transformers/actions/runs/{amd_id}",
+                        "status": "unknown",
+                    }
+                    amd_notes.append("GitHub run status is temporarily unavailable.")
                 path = (
                     str(raw_run.get("path") or "").split("@", 1)[0]
                     if isinstance(raw_run, dict)
@@ -8935,7 +8989,8 @@ class MetricsHandler(BaseHTTPRequestHandler):
                             "jobs": pr_ci_view.summarize_jobs(raw_jobs, [], "amd"),
                             "failures": attributed,
                             "comparison": amd_comparison,
-                            "notes": notes
+                            "notes": amd_notes
+                            + notes
                             + [
                                 "AMD failures come from the run-slow comparison report; full test telemetry is not available."
                             ],
