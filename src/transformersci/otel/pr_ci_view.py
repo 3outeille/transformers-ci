@@ -229,6 +229,9 @@ def failures(rows: list[dict], comparison_data: dict | None = None) -> list[dict
                 "hardware": hardware,
                 "job": job,
                 "trace_id": str(row.get("trace_id") or ""),
+                "duration_seconds": float(row.get("duration_seconds") or 0),
+                "exception_type": str(row.get("exception_type") or ""),
+                "exception_message": str(row.get("exception_message") or ""),
                 "specific": ((nodeid, hardware) in specific or nodeid in name_only)
                 if complete
                 else None,

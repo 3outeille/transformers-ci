@@ -231,7 +231,10 @@ def test_combined_view_endpoint_serves_both_lanes(monkeypatch) -> None:
     try:
         base = f"http://127.0.0.1:{server.server_port}"
         with urlopen(f"{base}/pr-ci-view?pr=49599", timeout=5) as response:
-            assert b"Latest Run Jobs (CPU + GPU)" in response.read()
+            page = response.read()
+            assert b"Latest Run Jobs" in page
+            assert b'data-group="test_model"' in page
+            assert b"Only PR-specific run-slow failures" in page
         with urlopen(f"{base}/pr-ci-view/app.js", timeout=5) as response:
             assert b"Only PR-specific" not in response.read()
         with urlopen(f"{base}/pr-ci-view/data?pr=49599", timeout=5) as response:
@@ -243,4 +246,5 @@ def test_combined_view_endpoint_serves_both_lanes(monkeypatch) -> None:
     assert payload["lanes"][0]["jobs"][0]["name"] == "tests_torch"
     assert payload["lanes"][1]["comparison"]["state"] == "complete"
     assert payload["lanes"][1]["failures"][0]["specific"] is False
+    assert payload["lanes"][1]["failures"][0]["model"] == "vit"
     assert payload["lanes"][2]["jobs"][0]["hardware"] == "amd-2gpu"

@@ -8809,17 +8809,34 @@ class MetricsHandler(BaseHTTPRequestHandler):
         if not re.fullmatch(r"[1-9][0-9]*", pr):
             self._reply_json(400, {"error": "Invalid pull request"})
             return
+        cache_key = f"pr-ci-view:{pr}"
+        cached = _public_response_cache_get(cache_key)
+        if cached is not None:
+            self._request_cache = "hit"
+            self._send(200, JSON_CONTENT_TYPE, cached, cache_control="no-store")
+            return
         try:
             sources = self._pr_ci_sources(pr)
+            nvidia_run = pr_ci_view.newest_run(sources["gpu"])
+            since = (
+                f"{nvidia_run['created_at'][:10]}T00:00:00Z"
+                if nvidia_run and nvidia_run.get("created_at")
+                else time.strftime(
+                    "%Y-%m-%dT00:00:00Z", time.gmtime(time.time() - 90 * 86400)
+                )
+            )
             comments: list[dict] = []
-            for page in range(1, 11):
+            for page in range(1, 4):
                 batch = _rerun_github_api(
-                    f"issues/{pr}/comments?per_page=100&page={page}"
+                    f"issues/{pr}/comments?per_page=100&sort=updated&direction=desc&since={since}&page={page}"
                 )
                 if not isinstance(batch, list):
                     break
                 comments.extend(item for item in batch if isinstance(item, dict))
-                if len(batch) < 100:
+                if len(batch) < 100 or (
+                    nvidia_run
+                    and pr_ci_view.matching_comment(comments, nvidia_run["run_id"])
+                ):
                     break
 
             def artifact(url: str) -> object:
@@ -8844,7 +8861,6 @@ class MetricsHandler(BaseHTTPRequestHandler):
                 return jobs, notes
 
             lanes = []
-            nvidia_run = pr_ci_view.newest_run(sources["gpu"])
             comment = (
                 pr_ci_view.matching_comment(comments, nvidia_run["run_id"])
                 if nvidia_run
@@ -8925,7 +8941,15 @@ class MetricsHandler(BaseHTTPRequestHandler):
                             ],
                         }
                     )
-            self._reply_json(200, {"pr": pr, "lanes": lanes})
+            for lane in lanes:
+                for failure in lane["failures"]:
+                    nodeid = failure["nodeid"]
+                    failure["model"] = run_row_model(nodeid)
+                    failure["test_name"] = run_row_test_name({"test_nodeid": nodeid})
+            payload = json.dumps({"pr": pr, "lanes": lanes}).encode()
+            _public_response_cache_put(cache_key, payload)
+            self._request_cache = "miss"
+            self._send(200, JSON_CONTENT_TYPE, payload, cache_control="no-store")
         except Exception as error:
             self._reply_json(*_rerun_source_error(error))
 
