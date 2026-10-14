@@ -153,7 +153,18 @@
     failures.replaceChildren();
     const listed = visibleFailures();
     if (!listed.length) {
-      failures.append(node('div', 'notice', search.value ? 'No matching failures.' : 'No failing tests.'));
+      let message = search.value ? 'No matching failures.' : 'No failing tests.';
+      if (!search.value) {
+        const failedRunSlow = snapshot.lanes.find(lane => lane.id !== 'cpu' && lane.jobs.some(job => statusClass(job.status) === 'failure') && !lane.failures.length);
+        if (failedRunSlow) {
+          const platform = failedRunSlow.id === 'amd' ? 'AMD' : 'Nvidia';
+          const state = failedRunSlow.comparison?.state;
+          message = state === 'pending' ? `${platform} jobs failed; test attribution is pending.`
+            : state === 'complete' ? `${platform} jobs failed; no PR-specific failing tests were reported.`
+            : `${platform} jobs failed; test attribution is unavailable.`;
+        }
+      }
+      failures.append(node('div', 'notice', message));
       return;
     }
     failures.append(node('div', 'summary', `${listed.length} failing test${listed.length === 1 ? '' : 's'}${group === 'none' ? ' · longest first' : ''}`));
