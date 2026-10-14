@@ -148,6 +148,20 @@ a.row.sel,a.row:hover{background:var(--hover)}
 
   // Keep this customization in the shared loader rather than each dashboard.
   // Clone dashboard links: moving React-owned nodes breaks later renders.
+  var overviewLinks = null, overviewLinksTriedAt = 0;
+  function loadOverviewLinks() {
+    if (Date.now() - overviewLinksTriedAt < 30000) return;
+    overviewLinksTriedAt = Date.now();
+    fetch('/api/dashboards/uid/pytest-observability', {credentials:'same-origin'})
+      .then(function (response) { return response.ok ? response.json() : null; })
+      .then(function (data) {
+        var links = data && data.dashboard && data.dashboard.links;
+        if (!Array.isArray(links)) return;
+        overviewLinks = links.filter(function (link) { return link.title && link.url; });
+        header();
+      })
+      .catch(function () {});
+  }
   function header() {
     var h = pd.querySelector('header'), crumbs = h && h.querySelector('nav[aria-label="Breadcrumbs"]');
     if (!crumbs) return;
@@ -188,6 +202,18 @@ a.row.sel,a.row:hover{background:var(--hover)}
       crumbs.parentNode.insertBefore(nav, crumbs);
     }
     var links = Array.from(pd.querySelectorAll('[data-testid="data-testid Dashboard link"]'));
+    if (!links.length) {
+      if (!overviewLinks) loadOverviewLinks();
+      if (overviewLinks) links = overviewLinks.map(function (item) {
+        var link = pd.createElement('a');
+        link.href = item.url;
+        link.textContent = item.title;
+        link.title = item.tooltip || item.title;
+        if (item.targetBlank) link.target = '_blank';
+        return link;
+      });
+      else if (nav.children.length > 1) return;
+    }
     var signature = JSON.stringify(links.map(function (a) { return [a.textContent, a.getAttribute('href')]; }));
     if (nav.dataset.links !== signature) {
       nav.dataset.links = signature;
@@ -400,7 +426,6 @@ a.row.sel,a.row:hover{background:var(--hover)}
 
   theme();
   place();
-  loadMine(false);
   setInterval(place, 1000);
 })();
 </script>
