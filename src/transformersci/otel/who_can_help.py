@@ -229,6 +229,8 @@ def explain(
     history: dict,
     people: list[dict],
     details: list[dict],
+    *,
+    timeout: float = 45,
 ) -> list[dict]:
     """A small model call chooses from evidenced logins and gives each a role."""
     cfg = wdyt.config()
@@ -275,7 +277,7 @@ def explain(
         method="POST",
     )
     proxies = {"http": cfg["proxy"], "https": cfg["proxy"]} if cfg["proxy"] else {}
-    with build_opener(ProxyHandler(proxies)).open(request, timeout=45) as response:
+    with build_opener(ProxyHandler(proxies)).open(request, timeout=timeout) as response:
         raw = response.read(32 * 1024 + 1)
     if len(raw) > 32 * 1024:
         raise ValueError("LLM response too large")
@@ -403,13 +405,38 @@ def suggest(
                         "text": "Asking the model where each person can help (slow)",
                     }
                 )
-                picks = explain(
-                    nodeid,
-                    location or nodeid.split("::", 1)[0],
-                    history,
-                    people,
-                    details,
-                )
+                picks = []
+                for attempt in range(2):
+                    try:
+                        picks = explain(
+                            nodeid,
+                            location or nodeid.split("::", 1)[0],
+                            history,
+                            people,
+                            details,
+                            timeout=20,
+                        )
+                    except (OSError, ValueError, KeyError, IndexError, TypeError):
+                        picks = []
+                    if picks:
+                        break
+                    if attempt == 0:
+                        emit({"event": "step", "text": "Retrying helper suggestions"})
+                        time.sleep(1)
+                if not picks:
+                    emit(
+                        {
+                            "event": "step",
+                            "text": "Using repository evidence for suggestions",
+                        }
+                    )
+                    picks = [
+                        {
+                            "person": person,
+                            "why": f"May be able to help because they {person['evidence']}.",
+                        }
+                        for person in people[:3]
+                    ]
                 result = (
                     {
                         "status": "ok",

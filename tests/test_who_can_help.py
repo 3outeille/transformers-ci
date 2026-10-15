@@ -205,7 +205,9 @@ def test_suggest_caches_result_and_limits_names(monkeypatch):
     monkeypatch.setattr(
         helpers,
         "explain",
-        lambda *args: [{"person": args[3][0], "why": "Can explain the change"}],
+        lambda *args, **kwargs: [
+            {"person": args[3][0], "why": "Can explain the change"}
+        ],
     )
     events = []
     first = helpers.suggest("alice", TRACE, NODE, DETAILS, emit=events.append)
@@ -221,13 +223,78 @@ def test_suggest_caches_result_and_limits_names(monkeypatch):
     assert calls == [("src/transformers/models/foo/modeling_foo.py", 91)]
 
 
+def test_suggest_uses_evidence_when_model_is_unavailable(monkeypatch):
+    monkeypatch.setattr(
+        helpers,
+        "why",
+        lambda *args: {
+            "number": 12,
+            "thread": {"author": "author"},
+            "reviews": [{"author": "reviewer"}],
+        },
+    )
+    monkeypatch.setattr(helpers.related_issues, "lookup", lambda *args: {"hits": []})
+
+    calls = []
+
+    def timeout(*args, **kwargs):
+        calls.append(kwargs["timeout"])
+        raise OSError("timeout")
+
+    monkeypatch.setattr(helpers, "explain", timeout)
+    monkeypatch.setattr(helpers.time, "sleep", lambda seconds: None)
+    events = []
+
+    result = helpers.suggest("caller", TRACE, NODE, DETAILS, emit=events.append)
+
+    assert result["status"] == "ok"
+    assert [person["login"] for person in result["people"]] == [
+        "reviewer",
+        "author",
+    ]
+    assert result["people"][0]["why"] == (
+        "May be able to help because they reviewed the related PR in PR #12."
+    )
+    assert result["location"] == "src/transformers/models/foo/modeling_foo.py:91"
+    assert calls == [20, 20]
+    assert {event.get("text") for event in events} >= {
+        "Retrying helper suggestions",
+        "Using repository evidence for suggestions",
+    }
+
+
+def test_suggest_retries_model_once_then_uses_its_answer(monkeypatch):
+    monkeypatch.setattr(
+        helpers,
+        "why",
+        lambda *args: {"number": 12, "thread": {"author": "author"}},
+    )
+    monkeypatch.setattr(helpers.related_issues, "lookup", lambda *args: {"hits": []})
+    monkeypatch.setattr(helpers.time, "sleep", lambda seconds: None)
+    calls = []
+
+    def explain(*args, **kwargs):
+        calls.append(kwargs["timeout"])
+        if len(calls) == 1:
+            raise TimeoutError("temporary timeout")
+        return [{"person": args[3][0], "why": "Can inspect the change"}]
+
+    monkeypatch.setattr(helpers, "explain", explain)
+
+    result = helpers.suggest("caller", TRACE, NODE, DETAILS)
+
+    assert calls == [20, 20]
+    assert result["status"] == "ok"
+    assert result["people"][0]["why"] == "Can inspect the change"
+
+
 def test_missing_relore_people_use_most_frequent_recent_test_modifier(monkeypatch):
     monkeypatch.setattr(helpers, "why", lambda *args: {})
     monkeypatch.setattr(helpers.related_issues, "lookup", lambda *args: {"hits": []})
     monkeypatch.setattr(
         helpers,
         "explain",
-        lambda *args: [
+        lambda *args, **kwargs: [
             {"person": args[3][0], "why": "Can inspect recent test changes"}
         ],
     )
@@ -274,7 +341,7 @@ def test_missing_trace_line_still_uses_test_commit_fallback(monkeypatch):
     monkeypatch.setattr(
         helpers,
         "explain",
-        lambda *args: [{"person": args[3][0], "why": "Can inspect the test"}],
+        lambda *args, **kwargs: [{"person": args[3][0], "why": "Can inspect the test"}],
     )
 
     def get(url):

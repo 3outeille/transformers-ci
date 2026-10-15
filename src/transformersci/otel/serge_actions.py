@@ -489,7 +489,7 @@ function helpersPopup(){
         unauthorized:'Your Grafana session expired. Sign in again.',
         rate_limited:'You asked a lot this hour. Try again later.',
         busy:'Serge is busy. Try again shortly.',
-        unavailable:'Could not read repository history right now. Try again shortly.'};
+        unavailable:'Could not find suggestions right now. Try again shortly.'};
       content.textContent=messages[data.status]||messages.unavailable;
     }
   }};
