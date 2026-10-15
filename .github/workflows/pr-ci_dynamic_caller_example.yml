@@ -682,7 +682,7 @@ jobs:
   # Depends on quality_gate so it is skipped when quality checks fail.
   # Not in ci_passed.needs for phase 1 (observational); add it for phase 2.
   # ===========================================================================
-  contracts:
+  fast-integration:
     needs: [quality_gate]
     if: ${{ !cancelled() && needs.quality_gate.result == 'success' }}
     uses: huggingface/transformers-ci/.github/workflows/pr-ci_contracts.yml@mic-pr-ci
