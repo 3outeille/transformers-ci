@@ -28,7 +28,7 @@ jobs:
     continue-on-error: true
     runs-on:
       group: ${{ inputs.runner }}
-    timeout-minutes: 90
+    timeout-minutes: 15
     container:
       image: ${{ inputs.docker_image }}
       options: "--shm-size=16gb"
@@ -48,6 +48,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          # full clone — needed to compute changed files via git diff on PR events.
           fetch-depth: 0
 
       - name: Install
