@@ -685,7 +685,7 @@ jobs:
   contracts:
     needs: [quality_gate]
     if: ${{ !cancelled() && needs.quality_gate.result == 'success' }}
-    uses: huggingface/transformers-ci/.github/workflows/pr-ci_contracts.yml@main
+    uses: huggingface/transformers-ci/.github/workflows/pr-ci_contracts.yml@mic-pr-ci
     with:
       docker_image: "huggingface/transformers-torch-light"
       runner:       "aws-m8i-l-cache"
