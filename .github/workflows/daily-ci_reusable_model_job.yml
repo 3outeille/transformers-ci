@@ -207,6 +207,23 @@ jobs:
           echo "dummy" > "/transformers/reports/${machine_type}_${report_name_prefix}_${matrix_folders}_test_reports/dummy.txt"
           ls -la "/transformers/reports/${machine_type}_${report_name_prefix}_${matrix_folders}_test_reports"
 
+      - name: Pytest collection timing (cold vs warm)
+        working-directory: /transformers
+        env:
+          model: ${{ matrix.folders }}
+        run: |
+          test_path="tests/${model}"
+          echo "=== [DEBUG] Timing: pytest --collect-only (1st run, cold) ==="
+          _cstart=$(date +%s)
+          python3 -m pytest --collect-only -q ${test_path} -p no:warnings 2>&1 | tail -5
+          _cend=$(date +%s)
+          echo "=== [DEBUG] 1st collect-only took $((_cend - _cstart))s ==="
+          echo "=== [DEBUG] Timing: pytest --collect-only (2nd run, warm) ==="
+          _cstart2=$(date +%s)
+          python3 -m pytest --collect-only -q ${test_path} -p no:warnings 2>&1 | tail -5
+          _cend2=$(date +%s)
+          echo "=== [DEBUG] 2nd collect-only took $((_cend2 - _cstart2))s ==="
+
       - name: Run all tests on GPU
         working-directory: /transformers
         env:
