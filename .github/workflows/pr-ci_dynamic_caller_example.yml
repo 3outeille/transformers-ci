@@ -689,7 +689,7 @@ jobs:
     with:
       docker_image: "huggingface/transformers-torch-light"
       runner:       "aws-m8i-l-cache"
-      tmic_sha:     "137638c8e90f777ad3a631a5f3b0e9d2a333cfe9"
+      tmic_sha:     "fcf77e9116cc462052180823b4a27f8cdf7c171c"
 
   # ---------------------------------------------------------------------------
   # ===========================================================================
