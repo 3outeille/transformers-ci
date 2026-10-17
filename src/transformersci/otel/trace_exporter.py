@@ -6198,6 +6198,45 @@ def _draft_nodeid(draft_id: str) -> str:
         return _draft_nodeids.get(draft_id, "")
 
 
+_claim_refresher_lock = threading.Lock()
+_claim_refresher_started = False
+CLAIM_REFRESH_SECONDS = 60.0
+
+
+def _read_claim_issue(number: int) -> object:
+    api_base = os.getenv("PYTEST_GITHUB_API_URL", DEFAULT_GITHUB_API_URL).rstrip("/")
+    return _github_api_get(
+        f"{api_base}/repos/{related_issues.REPOSITORY}/issues/{number}"
+    )
+
+
+def _ensure_claim_refresher() -> None:
+    """Keep published claims in step with their GitHub issues (closed, reopened).
+
+    Started by the first Project health request; one read per issue per
+    claims.CHECK_SECONDS, with the dashboard's read-only GitHub token.
+    """
+    global _claim_refresher_started
+    with _claim_refresher_lock:
+        if _claim_refresher_started:
+            return
+        _claim_refresher_started = True
+
+    def loop() -> None:
+        while True:
+            try:
+                claims.store().refresh(_read_claim_issue)
+            except Exception as exc:  # never let the loop die
+                print(
+                    f"[pytest-trace-exporter] claim refresh failed: {exc}",
+                    file=sys.stderr,
+                    flush=True,
+                )
+            time.sleep(CLAIM_REFRESH_SECONDS)
+
+    threading.Thread(target=loop, name="claim-refresh", daemon=True).start()
+
+
 def claim_line(login: str) -> str:
     """Appended to a published issue: GitHub shows the shared token as author."""
     return f"Picked up by @{login} from the transformers-ci dashboard."
@@ -6225,6 +6264,25 @@ def _prometheus_vector(query: str) -> list[dict]:
     result = (payload.get("data") or {}).get("result")
     if not isinstance(result, list):
         raise RuntimeError("Prometheus returned no vector")
+    return result
+
+
+def _prometheus_matrix(query: str, start: float, end: float, step: float) -> list[dict]:
+    """Run a range query; raise when Prometheus is unset or answers badly."""
+    base_url = prometheus_base_url()
+    if not base_url:
+        raise RuntimeError("Prometheus URL is not configured")
+    params = {"query": query, "start": start, "end": end, "step": step}
+    payload = _http_get_json(
+        f"{base_url}/api/v1/query_range?{urlencode(params)}",
+        timeout=60,
+        upstream="prometheus",
+    )
+    if not isinstance(payload, dict) or payload.get("status") != "success":
+        raise RuntimeError("Prometheus range query failed")
+    result = (payload.get("data") or {}).get("result")
+    if not isinstance(result, list):
+        raise RuntimeError("Prometheus returned no matrix")
     return result
 
 
@@ -8009,13 +8067,18 @@ class MetricsHandler(BaseHTTPRequestHandler):
         elif path == "/serge-actions/wdyt/cost":
             self._serve_wdyt_cost(parse_qs(urlparse(self.path).query))
         elif path == "/serge-actions/who-can-help":
-            self._serve_who_can_help()
+            if parse_qs(urlparse(self.path).query).get("kind") == ["slow"]:
+                self._serve_slow_who_can_help()
+            else:
+                self._serve_who_can_help()
         elif path == "/serge-actions/new-issue/draft":
             self._serve_new_issue_draft()
         elif path == "/serge-actions/new-issue/publish":
             self._serve_new_issue_publish()
         elif path == "/serge-actions/new-issue/release":
             self._serve_new_issue_release()
+        elif parse_qs(urlparse(self.path).query).get("kind") == ["slow"]:
+            self._serve_slow_wdyt()
         else:
             self._serve_wdyt()
 
@@ -8145,6 +8208,9 @@ class MetricsHandler(BaseHTTPRequestHandler):
         if not isinstance(body, dict):
             self._reply_json(400, {"status": "invalid"})
             return
+        if body.get("kind") == "slow":
+            self._serve_slow_issue_draft(body)
+            return
         trace_id = normalize_trace_id(str(body.get("trace_id") or ""))
         nodeid = str(body.get("test_nodeid") or "").strip()
         if (
@@ -8192,6 +8258,124 @@ class MetricsHandler(BaseHTTPRequestHandler):
             return result
 
         self._stream_action(draft, "Reading the selected failure")
+
+    @staticmethod
+    def _slow_target(body: dict) -> tuple | None:
+        """(nodeid, job, runner, durations, first_day) of a Slow row, or None."""
+        nodeid = str(body.get("test_nodeid") or "").strip()
+        job = str(body.get("job") or "")
+        runner = str(body.get("runner") or "")
+        first_day = str(body.get("first_day") or "")
+        durations = body.get("durations")
+        if (
+            not re.fullmatch(r"tests/[\w./-]+\.py(?:::[^\x00-\x1f]{1,1800})?", nodeid)
+            or ".." in nodeid.split("::", 1)[0].split("/")
+            or not re.fullmatch(r"[\w.-]{1,100}", job)
+            or runner not in ("GPU", "CPU")
+            or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", first_day)
+            or not isinstance(durations, list)
+            or not 1 <= len(durations) <= 31
+            or not all(
+                value is None
+                or (
+                    isinstance(value, (int, float))
+                    and not isinstance(value, bool)
+                    and 0 <= value < 10**6
+                )
+                for value in durations
+            )
+            or all(value is None for value in durations)
+        ):
+            return None
+        return nodeid, job, runner, durations, first_day
+
+    def _read_slow_body(self) -> tuple | None:
+        """Parse a slow action's body; None after replying 403/400."""
+        if not self._action_allowed():
+            return None
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+            body = json.loads(self.rfile.read(length)) if 0 < length <= 8192 else None
+        except (ValueError, TypeError):
+            body = None
+        target = self._slow_target(body) if isinstance(body, dict) else None
+        if target is None:
+            self._reply_json(400, {"status": "invalid"})
+        return target
+
+    def _serve_slow_issue_draft(self, body: dict) -> None:
+        """New issue for a slow test (Project health): timings, no trace."""
+        target = self._slow_target(body)
+        if target is None:
+            self._reply_json(400, {"status": "invalid"})
+            return
+        nodeid, job, runner, durations, first_day = target
+        login = self._action_user()
+        if not login:
+            return
+        reservation = claims.store().reserve(nodeid, login)
+        if reservation["status"] != "ok":
+            self._reply_json(409, reservation)
+            return
+
+        def draft(emit: Callable[[dict], None]) -> dict:
+            emit({"event": "step", "text": "Drafting the issue from the timings"})
+            result = new_issue.slow_draft(
+                login, nodeid, job, runner, durations, first_day
+            )
+            _remember_draft(result["draft_id"], nodeid)
+            return result
+
+        self._stream_action(draft, "Reading the test's timings on main")
+
+    def _serve_slow_who_can_help(self) -> None:
+        """Who can help for a slow test: people around the test method itself."""
+        target = self._read_slow_body()
+        if target is None:
+            return
+        login = self._action_user()
+        if not login:
+            return
+        nodeid = target[0]
+        self._stream_action(
+            lambda emit: who_can_help.suggest(
+                login, "slow", nodeid, [], github_get=_github_api_get, emit=emit
+            ),
+            "Reading the slow test",
+        )
+
+    def _serve_slow_wdyt(self) -> None:
+        """WDYT? for a slow test: the test's source and timings, a slow prompt."""
+        target = self._read_slow_body()
+        if target is None:
+            return
+        login = self._action_user()
+        if not login:
+            return
+        nodeid, job, runner, durations, first_day = target
+
+        def make_prompt(emit: Callable[[dict], None]) -> tuple[str, list[dict]]:
+            emit({"event": "step", "text": "Reading the test's source"})
+            source = new_issue.failing_test_source(nodeid, [], "", _github_api_get)
+            emit(
+                {
+                    "event": "step",
+                    "text": "Found the test function"
+                    if source
+                    else "Test source not found",
+                }
+            )
+            prompt = wdyt.build_slow_prompt(
+                nodeid, job, runner, durations, first_day, source
+            )
+            return prompt, []
+
+        self._stream_action(
+            lambda emit: wdyt.answer(
+                login, "slow", nodeid, make_prompt, emit, wdyt.SLOW_SYSTEM_PROMPT
+            ),
+            "Reading the slow test",
+        )
 
     def _serve_new_issue_publish(self) -> None:
         if not self._action_allowed():
@@ -9199,13 +9383,18 @@ class MetricsHandler(BaseHTTPRequestHandler):
             self._request_cache = "hit"
             payload = hit[1]
         else:
-            build = (
-                project_health.build_rows
-                if path == "/project-health/rows"
-                else project_health.build_trend
-            )
             try:
-                body = build(_prometheus_vector, now=time.time(), days=days)
+                if path == "/project-health/rows":
+                    body = project_health.build_rows(
+                        _prometheus_vector,
+                        now=time.time(),
+                        days=days,
+                        query_range=_prometheus_matrix,
+                    )
+                else:
+                    body = project_health.build_trend(
+                        _prometheus_vector, now=time.time(), days=days
+                    )
             except Exception as exc:
                 self._reply_json(502, {"error": f"Prometheus unavailable: {exc}"})
                 return
@@ -9216,6 +9405,7 @@ class MetricsHandler(BaseHTTPRequestHandler):
                     payload,
                 )
         if path == "/project-health/rows":
+            _ensure_claim_refresher()
             # Claims change by the second (someone just clicked New issue), so
             # they are joined per request, never cached with the rows.
             live = json.dumps(claims.store().snapshot(), separators=(",", ":"))
