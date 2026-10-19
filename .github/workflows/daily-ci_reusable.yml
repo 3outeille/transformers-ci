@@ -52,7 +52,7 @@ on:
         required: false
         type: string
       subdirs:
-        default: "['models/vit']"
+        default: ""
         required: false
         type: string
       pytest_marker:
