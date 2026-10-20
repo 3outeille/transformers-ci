@@ -17,7 +17,7 @@ run-model-contracts --fixtures-only --fleet prototypes --variant bfloat16
 # Selection by changed model, configuration and processor dependencies.
 git diff --name-only origin/main...HEAD > /tmp/mic-changed-files.txt
 run-model-contracts --fixtures-only --fleet prototypes --variant bfloat16 \
-  --changed-files /tmp/mic-changed-files.txt --output /tmp/results.jsonl 2>/tmp/run.log
+  --changed-files /tmp/mic-changed-files.txt --diff-base origin/main --output /tmp/results.jsonl 2>/tmp/run.log
 report-model-contracts /tmp/results.jsonl --log /tmp/run.log
 ```
 
@@ -27,6 +27,14 @@ when the control's `--target` was supplied. Documentation-only changes do not ne
 Hub downloads. Model changes include processor dependencies: a GPT-2 tokenizer
 change can select Llama and SmolVLM; shared library or dependency changes select all.
 Push and merge-group events run the entire fast fleet.
+
+When a PR only adds model entries to Auto mappings or model imports under
+`TYPE_CHECKING`, selection uses the base diff to run MICs for those models and
+their dependent fixtures. A new model without a MIC selects none of the existing
+MICs. Changes to existing registrations, shared runtime logic, dependencies, or
+unreadable diffs retain full-fleet selection. `--diff-base` uses the merge base
+with `HEAD`, matching the changed-file list above. Without it, shared files keep
+the conservative full-fleet behavior.
 
 Baselines check exact outputs, numeric shapes and tolerances, required outputs,
 finite values, named gradient checks and boolean assertions. A missing baseline or baseline identity mismatch fails. Locked file hashes verify contract code and fixture bytes independently in the
