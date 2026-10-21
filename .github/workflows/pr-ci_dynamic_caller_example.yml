@@ -405,18 +405,20 @@ jobs:
         run: |
           uv pip uninstall Pillow torchvision -q
           python -c "from transformers import *" || (echo 'import failed with torch only (no PIL). Fix unprotected imports!!'; exit 1)
-          uv pip install -e ".[quality]" -q
-
-      - name: "Test import with PIL only (no torch, no torchvision)"
-        run: |
-          uv pip uninstall torch torchvision torchaudio -q
-          python -c "from transformers import *" || (echo 'import failed with PIL only (no torch). Fix unprotected imports!!'; exit 1)
-          uv pip install -e ".[quality]" -q
+          uv pip install Pillow -q  # restore PIL so subsequent steps have Pillow available
 
       - name: "Test import with torch + PIL, no torchvision"
         run: |
+          # torchvision already absent from previous step; PIL was restored above
           uv pip uninstall torchvision -q
           python -c "from transformers import *" || (echo 'import failed with torch+PIL but no torchvision. Fix unprotected imports!!'; exit 1)
+          # no restore: torch+PIL still present for the PIL-only step below
+
+      - name: "Test import with PIL only (no torch, no torchvision)"
+        run: |
+          # torchvision already absent; PIL present from the torch-only restore above
+          uv pip uninstall torch torchvision torchaudio -q
+          python -c "from transformers import *" || (echo 'import failed with PIL only (no torch). Fix unprotected imports!!'; exit 1)
           uv pip install -e ".[quality]" -q
 
   # ===========================================================================
