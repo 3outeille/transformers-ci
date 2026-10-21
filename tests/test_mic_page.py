@@ -288,6 +288,28 @@ def test_variant_and_platform_filters_apply_before_row_limit(monkeypatch):
     }
 
 
+def test_model_limit_keeps_all_error_cases_of_each_selected_model(monkeypatch):
+    monkeypatch.setattr(mic_page, "LIMIT", 1)
+    other = failure(node="tests/contracts::other::other[default]")
+    older = failure()
+    newer = failure("124:1", node="tests/contracts::demo::demo[eager]")
+
+    def record(item, repo):
+        return detail(
+            test_nodeid=item["metric"]["test_nodeid"], **{"mic.fixture_repo": repo}
+        )
+
+    records = {
+        "123:1": [record(other, "creator/other"), record(older, "creator/demo")],
+        "124:1": [record(newer, "creator/demo")],
+    }
+    data = mic_page.build_rows(queries([other, older, newer]), records.get)
+    assert data["models"] == 2
+    assert data["cases"] == 3
+    assert len(data["rows"]) == 2
+    assert {row["fixture_repo"] for row in data["rows"]} == {"creator/demo"}
+
+
 @pytest.mark.parametrize(
     "scope,matcher",
     [("main", ',pr="main"'), ("prs", ',pr=~"[0-9]+|gh-readonly-queue/.*"')],
@@ -334,6 +356,142 @@ def test_daily_strip_counts_distinct_runs_and_keeps_latest_failure():
     assert row["fails"] == 2
     assert row["run_id"] == "124:1"
     assert data["first_day"] == 94 * day
+
+
+@pytest.mark.parametrize("scope,other_branch", [("main", "42"), ("all", "42")])
+def test_daily_history_observes_passes_without_clearing_a_different_branch(
+    scope, other_branch
+):
+    today = 100 * 86400
+    old = failure()
+    old["metric"]["pr"] = "main"
+    records = {
+        "123:1": [
+            detail(
+                **{"mic.fixture_repo": "huggingface-mic/demo-mic", "mic.status": "fail"}
+            )
+        ],
+        "124:1": [
+            detail(
+                **{"mic.fixture_repo": "huggingface-mic/demo-mic", "mic.status": "pass"}
+            )
+        ],
+        "125:1": [
+            detail(
+                **{
+                    "mic.fixture_repo": "huggingface-mic/demo-mic",
+                    "mic.status": "error",
+                }
+            )
+        ],
+    }
+
+    def query(expression):
+        if "pytest_run_start_time_seconds" in expression:
+            return [
+                vector({"run_id": f"{run}:1"}, today + run) for run in (123, 124, 125)
+            ]
+        if "max by (run_id, pr)" in expression:
+            assert ('pr="main"' in expression) == (scope == "main")
+            return [
+                vector({"run_id": "124:1", "pr": "main"}),
+                vector({"run_id": "125:1", "pr": other_branch}),
+            ]
+        if "pytest_run_job_" in expression or "pytest_pr_info" in expression:
+            return []
+        return [old, old]
+
+    row = mic_page.build_rows(query, records.get, now=today + 200, scope=scope)["rows"][
+        0
+    ]
+    assert row["daily"][-1] == {"pass": 1, "fail": 1, "skipped": 0}
+    assert row["latest"]["run_id"] == "124:1"
+    assert row["latest"]["status"] == "pass"
+    assert row["sticky"] is False
+    assert "var-pr=main" in row["latest"]["run_url"]
+    assert (
+        mic_page.build_rows(
+            query, records.get, now=today + 200, scope=scope, sticky_only=True
+        )["rows"]
+        == []
+    )
+
+
+def test_missing_case_records_do_not_infer_recovery_from_a_green_job():
+    def query(expression):
+        if "max by (run_id, pr)" in expression:
+            return [vector({"run_id": "124:1", "pr": "42"})]
+        return queries([failure()])(expression)
+
+    row = mic_page.build_rows(query, lambda run: None, sticky_only=True)["rows"][0]
+    assert row["sticky"] is True
+    assert row["latest"]["run_id"] == "123:1"
+    assert not any(day["pass"] for day in row["daily"])
+
+
+@pytest.mark.parametrize("complete", [True, False])
+def test_setup_error_clears_only_after_observing_a_complete_successful_job(complete):
+    setup = failure(node="tests/contracts::runner")
+
+    def query(expression):
+        if "max by (run_id, pr)" in expression:
+            return [vector({"run_id": "124:1", "pr": "42"}, 1 if complete else 2)]
+        return queries([setup])(expression)
+
+    def load(run):
+        return [detail(**{"mic.status": "pass"})] if run == "124:1" else None
+
+    row = mic_page.build_rows(query, load)["rows"][0]
+    assert row["sticky"] is not complete
+    assert row["latest"]["status"] == ("pass" if complete else "fail")
+
+
+def test_contract_link_uses_the_contract_revision_instead_of_fixture_revision():
+    row = detail(
+        **{
+            "mic.contract": "huggingface-mic/demo-mic",
+            "mic.contract_revision": "c" * 40,
+            "mic.revision": "d" * 40,
+        }
+    )
+    result = mic_page.build_rows(queries([failure()]), lambda run: [row])["rows"][0]
+    assert (
+        result["contract_url"]
+        == f"https://huggingface.co/huggingface-mic/demo-mic/blob/{'c' * 40}/integrations/transformers/usage.md"
+    )
+
+
+def test_multi_select_filters_combine_values_with_or_and_dimensions_with_and():
+    other = failure("124:1", node="tests/contracts::demo::demo[default]")
+    other["metric"]["exception_type"] = "MICExecutionError"
+    records = {
+        "123:1": [detail(**{"mic.variant": "bfloat16", "mic.platform": "cpu"})],
+        "124:1": [
+            detail(
+                test_nodeid=other["metric"]["test_nodeid"],
+                **{
+                    "mic.variant": "default",
+                    "mic.platform": "cuda",
+                    "mic.status": "error",
+                },
+            )
+        ],
+    }
+    rows = mic_page.build_rows(
+        queries([failure(), other]),
+        records.get,
+        variant=["default", "bfloat16"],
+        platform=["cpu", "cuda"],
+        failure_type=["Runtime traceback", "Baseline assertion"],
+    )["rows"]
+    assert len(rows) == 2
+    rows = mic_page.build_rows(
+        queries([failure(), other]),
+        records.get,
+        variant=["default", "bfloat16"],
+        platform=["cpu"],
+    )["rows"]
+    assert [row["run_id"] for row in rows] == ["123:1"]
 
 
 @pytest.mark.parametrize(
