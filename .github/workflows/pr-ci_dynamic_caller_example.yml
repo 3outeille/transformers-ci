@@ -480,7 +480,7 @@ jobs:
       job_name:          "tests_torch"
       docker_image:      "huggingface/transformers-torch-light"
       parallelism:       8
-      marker:            "not (generate or is_training_test or is_tensor_parallel_test or is_fsdp_test)"
+      marker:            "not (generate or is_training_test or is_tensor_parallel_test or is_expert_parallel_test or is_fsdp_test)"
       use_dev_image:     ${{ needs.test-preparation.outputs.use_dev_image == 'true' }}
     secrets: inherit
       # install_steps, pytest_num_workers, etc. → all defaults
